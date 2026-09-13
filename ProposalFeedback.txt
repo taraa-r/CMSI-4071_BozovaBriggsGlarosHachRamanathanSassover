@@ -1,0 +1,38 @@
+CMSI 4071 Fall 2026
+Project Proposal Feedback
+Project: RealEye A.I. content detector
+=========================
+Guideline Requirement                        Status
+-------------------------------     ----------------------------
+High-level overview                 Meets or Exceeds Requirement
+Comparison to existing software     Meets or Exceeds Requirement
+Important features listed           Meets or Exceeds Requirement
+Hardware/software Requirements      Meets or Exceeds Requirement
+End users identified                Meets or Exceeds Requirement
+Maintenance discussed               Parially fulfilled
+Applies prior learning              Meets or Exceeds Requirement
+Extends prior learning              Meets or Exceeds Requirement
+Appropriate difficulty              Meets or Exceeds Requirement
+Feasible in one semester            Meets or Exceeds Requirement
+Required skills/tools available     Meets or Exceeds Requirement
+Interest and motivation             Meets or Exceeds Requirement
+
+
+Summary:
+--------
+Overall Assessment
+Your proposal is very closely aligned with the CMSI 4071 Proposal Guidelines
+and addresses nearly every required element.  The only minor gap is that the
+proposal does not explicitly discuss long-term maintenance of the system,
+even though it covers technologies, scope, users, and implementation details
+well.
+
+Guideline-Based Recommendation
+Add a brief maintenance statement describing how detection models,
+browser-extension compatibility, and provenance-data integrations would be
+updated over time.  With that addition, the proposal would fully satisfy all
+of the written proposal requirements in the CMSI 4072 guidelines.
+
+Full 5% for this deliverable.
+
+Nice job overall!  Keep up the good work.
