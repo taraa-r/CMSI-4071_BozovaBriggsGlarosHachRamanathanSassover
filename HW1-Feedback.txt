@@ -1,0 +1,67 @@
+
+Essay Feedback
+Homework Assignment #1
+CMSI 4071 Fall 2026
+======================
+
+SUMMARY:
+   The essay provides a clear and accurate synopsis of the article's major
+      themes.  You effectively summarize:
+         * The distinction between current AI capabilities and the
+            possibility of future artificial general intelligence (AGI).
+         * Examples of unintended AI behavior, including Microsoft's Tay
+            chatbot and optimization problems where AI systems satisfy
+            objectives in unexpected ways.
+         * Concerns surrounding AI-generated media, misinformation, and
+            public trust.
+   The summary demonstrates a solid understanding of the article and
+      communicates its key points effectively.
+
+RELATION TO S/W ENGINEERING
+   The essay does an excellent job connecting the article's themes to
+      software engineering practice.
+   The discussion demonstrates a good understanding of software engineering
+      as more than programming, emphasizing testing, integration, risk
+      analysis, and professional responsibility.
+   Minor deduction: The paper could have incorporated a few more formal
+      software engineering concepts such as verification and validation,
+      requirements engineering terminology, software architecture patterns,
+      or safety-critical system development.
+
+THOUGHTS/OPINIONS
+   You move beyond summary and provide meaningful reflection throughout the
+      second half of the essay.  Examples include:
+      * belief that software engineers must consider the impact of design
+         decisions on users.
+      * discussion of AI use in healthcare and the dangers of insufficient
+         oversight.
+      * emphasis on responsible design, transparency, and ethical
+         accountability.
+      * sections demonstrate thoughtful engagement with the article's
+         themes.
+   Deduction: Much of the reflection is framed as general analysis rather
+      than explicit personal opinion.  Additional discussion of what
+      specifically surprised you, what you agreed or disagreed with, or how
+      the article influenced your own perspective as future software
+      engineers would strengthen this category.
+
+SPELLING/GRAMMAR
+   The paper is well organized and generally well written.  However:
+      * Several sentences are lengthy and could be divided for better
+         readability.
+      * Some wording is repetitive, particularly around "unexpected
+         behavior" and "unintended consequences."
+      * Minor stylistic editing would improve conciseness.
+
+OVERALL ASSESSMENT:
+   Category                          Points
+   Summary of article                  30
+   Relation to S/W engineering         29
+   Thoughts/opinions presented         28
+   Spelling/Grammar                     9
+                                     -----
+   Subtotal                            96
+   ------------------------------------------------------
+   Total Percentage:   96 out of 100 = 96% which is an A on this assignment
+
+
