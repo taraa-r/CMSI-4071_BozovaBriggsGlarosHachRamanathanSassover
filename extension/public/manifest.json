@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "RealEye",
+  "version": "0.1.0",
+  "description": "Your eye for what's real.",
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "RealEye"
+  },
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:8000/*"]
+}
