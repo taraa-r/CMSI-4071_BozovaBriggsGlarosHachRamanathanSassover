@@ -20,12 +20,11 @@ You need:
 - **Python 3.11** — https://www.python.org/downloads/release/python-3119/ (PyTorch does not support newer Pythons yet)
 - **Google Chrome**
 
-Then clone the repo and switch to the branch:
+Then clone the repo (or `git pull` if you already have it):
 
 ```
 git clone https://github.com/taraa-r/CMSI-4071_BozovaBriggsGlarosHachRamanathanSassover.git
 cd CMSI-4071_BozovaBriggsGlarosHachRamanathanSassover
-git checkout setup/project-skeleton
 ```
 
 ### 1. Server
