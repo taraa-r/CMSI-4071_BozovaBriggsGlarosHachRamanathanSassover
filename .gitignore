@@ -220,3 +220,7 @@ __marimo__/
 # Node / extension
 node_modules/
 extension/dist/
+
+# ML datasets (regenerate with ml/text/prepare_data.py)
+ml/data/
+ml/models/
