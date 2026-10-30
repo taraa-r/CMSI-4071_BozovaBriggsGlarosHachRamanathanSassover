@@ -14,12 +14,13 @@ so you can sort and read the mistakes yourself (e.g. in Google Sheets).
 
 import argparse
 import json
-import re
 from pathlib import Path
 
 import pandas as pd
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+from mage import domain
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "text"
 
@@ -34,11 +35,6 @@ def parse_args():
     parser.add_argument("--max-length", type=int, default=512, help="Use the same value as in training")
     parser.add_argument("--limit", type=int, default=None, help="Only score this many rows (for quick tests)")
     return parser.parse_args()
-
-
-def domain(src: str) -> str:
-    """'yelp_human' -> 'yelp', 'sci_gen_machine_...' -> 'sci_gen'."""
-    return re.split(r"_(?:human|machine)", src, maxsplit=1)[0]
 
 
 def score(texts, model_dir, batch_size, max_length):
@@ -88,12 +84,16 @@ def print_overconfidence(df, cutoff):
 
 
 def print_loss_history(model_dir):
+    metrics = Path(model_dir) / "metrics.json"
     states = sorted(Path(model_dir).rglob("trainer_state.json"))
-    if not states:
-        print("No trainer_state.json found (the checkpoints folder was probably deleted before saving).")
+    if metrics.exists() and "log_history" in json.loads(metrics.read_text()):
+        history = json.loads(metrics.read_text())["log_history"]
+    elif states:
+        history = json.loads(states[-1].read_text())["log_history"]
+    else:
+        print("No loss history saved (models trained before Oct 29 didn't keep it).")
         print("Look for the per-epoch 'eval_loss' lines in the Colab output from the training run instead.")
         return
-    history = json.loads(states[-1].read_text())["log_history"]
     for entry in history:
         if "eval_loss" in entry:
             print(f"  epoch {entry['epoch']:.0f}: validation loss {entry['eval_loss']:.4f}"

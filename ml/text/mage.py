@@ -10,6 +10,11 @@ MAX_CHARS = 5000
 SPLITS = ["train", "validation", "test"]
 
 
+def domain(src: str) -> str:
+    """Writing type from a MAGE source: 'yelp_human' -> 'yelp', 'sci_gen_machine_...' -> 'sci_gen'."""
+    return re.split(r"_(?:human|machine)", src, maxsplit=1)[0]
+
+
 def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 

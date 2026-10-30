@@ -49,7 +49,7 @@ This takes a few minutes. If Colab shows a **"Restart session"** button afterwar
 !python text/prepare_data.py
 ```
 
-Should end with `train 20,000 rows`, `validation 5,000 rows`, `test 51,002 rows` — the same numbers as on a laptop (seed 42).
+It first prints how many texts per class each writing type gets, then the totals. `validation 5,000 rows` and `test 51,002 rows` should match every time (seed 42). The train total depends on how many human texts each writing type has.
 
 ```
 !python text/train_text.py
