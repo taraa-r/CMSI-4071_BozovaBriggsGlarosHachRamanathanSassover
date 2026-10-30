@@ -4,13 +4,18 @@ Run from the ml folder:
     .venv\\Scripts\\python text\\prepare_data.py      (Windows)
     .venv/bin/python text/prepare_data.py             (Mac)
 
+Options:
+    --train-per-class N   human AND AI texts in train.jsonl (default 40,000;
+                          the first run, Oct 26, used 10,000)
+
 Writes to ml/data/text/ (not stored in git — everyone regenerates it; the seed makes it identical):
-    train.jsonl       balanced sample: TRAIN_PER_CLASS human + TRAIN_PER_CLASS AI
-    validation.jsonl  balanced sample, for choosing the threshold
+    train.jsonl       balanced sample: N human + N AI
+    validation.jsonl  balanced sample, for choosing the threshold (same for every N)
     test.jsonl        ALL cleaned test texts — the final exam, only used once at the end
     manifest.json     counts, seed, and settings (SRS 5.3.4.11 evaluation record)
 """
 
+import argparse
 import json
 from datetime import date
 from pathlib import Path
@@ -20,7 +25,7 @@ import pandas as pd
 from mage import MAX_CHARS, MIN_CHARS, clean, load_raw
 
 SEED = 42
-TRAIN_PER_CLASS = 10_000
+DEFAULT_TRAIN_PER_CLASS = 40_000
 VALIDATION_PER_CLASS = 2_500
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "text"
 COLUMNS = ["text", "label", "src"]
@@ -40,6 +45,10 @@ def save(df: pd.DataFrame, name: str) -> dict:
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train-per-class", type=int, default=DEFAULT_TRAIN_PER_CLASS)
+    args = parser.parse_args()
+
     raw = load_raw()
     train, validation, test = (clean(raw[name]) for name in ["train", "validation", "test"])
 
@@ -55,7 +64,7 @@ def main():
         "labels": {"0": "human", "1": "AI"},
         "char_range": [MIN_CHARS, MAX_CHARS],
         "splits": {
-            "train": save(balanced_sample(train, TRAIN_PER_CLASS), "train"),
+            "train": save(balanced_sample(train, args.train_per_class), "train"),
             "validation": save(balanced_sample(validation, VALIDATION_PER_CLASS), "validation"),
             "test": save(test, "test"),
         },
