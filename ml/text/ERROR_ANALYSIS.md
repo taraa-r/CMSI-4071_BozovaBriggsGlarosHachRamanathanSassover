@@ -26,7 +26,7 @@ We changed the data prep and training scripts to address both, then retrained (O
 | Write `calibrate.py` | Done, tested on synthetic scores and a dummy model |
 | Run `calibrate.py` on the new model | Done — F1 0.915, 4.1% false positives on held-out half (section 5) |
 | Add Platt scaling to `calibrate.py` | Done, tested on synthetic two-clump scores (ECE 0.066 → 0.008) |
-| Rerun `calibrate.py` with Platt scaling | **To do** |
+| Rerun `calibrate.py` with Platt scaling | Done — honest human scores, loss 0.363 → 0.299, ECE 0.090 (see section 5) |
 | Final test-set run | **To do** — script not written yet |
 
 ## 1. What we found
@@ -298,11 +298,32 @@ Temperature scaling divides the margin by T: one setting, so it can only stretch
 
 Platt recovered both clumps (1.5% vs. true 1%, 84.3% vs. true 84%). F1 and false-positive rate were identical before and after.
 
-**Not yet run on the real model.** Expected: about the same cutoff results as above (F1 ≈ 0.915, false positives ≈ 4%) and a much lower ECE.
+### Platt results on the real model (Oct 29)
+
+**a = 1.216, b = −2.057.** Cutoff **0.8118** (same raw score, 0.9475, as with temperature scaling). F1 0.915, false positives 4.1%, recall 87.7%. Every metric at the cutoff is identical, as expected.
+
+| (on half B) | ECE | Loss |
+|---|---|---|
+| Raw | 0.108 | 0.386 |
+| Temperature | 0.093 | 0.363 |
+| **Platt (saved)** | **0.090** | **0.299** |
+
+| Score group (Platt) | Texts | Actually AI |
+|---|---|---|
+| 0–10% | 958 | 2% |
+| 10–70% | 134 | 0–42% (small groups) |
+| 70–80% | 215 | **42%** |
+| 80–90% | 1,192 | 92% |
+
+- **Fixed:** human texts now score in the low single digits. Temperature scaling had them at about 13%.
+- **Loss improved a lot** (0.363 → 0.299), so Platt fits reality much better overall. ECE uses only 10 groups, so it misses some of the improvement.
+- **New mismatch:** the top clump split. Texts scored 70–80% are only 42% AI, and texts scored 80–90% are 92% AI. Inside that clump, a tiny change in raw score means a huge change in how likely the text is AI, and a single smooth curve can't bend that sharply.
+- **Extension impact:** texts scoring 0.70–0.81 are labeled human (below the cutoff) but would show "Model estimate: ~75%." **Recommendation:** make the label ("Likely AI" / "Likely human") the main result in the popup, with the percentage secondary or shown as a band (Low / Medium / High).
+- **Optional next step:** isotonic regression, a more flexible calibration that can follow the sharp jump. It needs a lookup table in the server instead of two numbers.
 - **The cutoff stays in a narrow band** (0.868–0.883 for 3–10% targets), because the AI texts and the hard human texts share the top clump. The server must use the exact saved cutoff, not a rounded one.
 
 ## Next steps
 
-1. **Rerun `calibrate.py`** (now with Platt scaling, about 3 minutes on a GPU). Choose the false-positive target: 5% (F1 0.915) or 7% (F1 0.919).
+1. **Decide on calibration:** keep Platt (saved now), or try isotonic regression. Choose the false-positive target: 5% (F1 0.915, saved now) or 7% (F1 0.919).
 2. **Final test-set check**, run once: F1, false-positive rate and ECE at the chosen cutoff. The targets are F1 ≥ 0.75 and false-positive rate ≤ 0.10 (SRS 5.4.8, 5.4.20).
 3. If false positives are still too high, try training for 3 epochs (validation loss was still dropping), or `FacebookAI/roberta-base` (`--model FacebookAI/roberta-base`), as planned in [DATASETS.md](DATASETS.md).
