@@ -37,23 +37,32 @@ def parse_args():
     return parser.parse_args()
 
 
-def score(texts, model_dir, batch_size, max_length):
-    """The model's AI score (softmax probability of label 1) for each text."""
+def margins(texts, model_dir, batch_size, max_length):
+    """The model's raw output for each text: AI logit minus human logit.
+
+    Positive leans AI, negative leans human. The AI score is sigmoid(margin), which equals
+    the softmax probability of label 1. calibrate.py divides this by a temperature first.
+    """
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(model_dir).to(device).eval()
     print(f"Scoring {len(texts):,} texts on {device}...")
 
-    scores = []
+    out = []
     for start in range(0, len(texts), batch_size):
         batch = tokenizer(texts[start:start + batch_size], truncation=True, max_length=max_length,
                           padding=True, return_tensors="pt").to(device)
         with torch.no_grad(), torch.autocast(device_type="cuda", enabled=device == "cuda"):
             logits = model(**batch).logits.float()
-        scores += torch.softmax(logits, dim=-1)[:, 1].tolist()
+        out += (logits[:, 1] - logits[:, 0]).tolist()
         if (start // batch_size) % 20 == 0:
             print(f"  {start + len(batch['input_ids']):,} / {len(texts):,}")
-    return scores
+    return out
+
+
+def score(texts, model_dir, batch_size, max_length):
+    """The model's AI score (softmax probability of label 1) for each text."""
+    return torch.sigmoid(torch.tensor(margins(texts, model_dir, batch_size, max_length))).tolist()
 
 
 def print_by_domain(df, thresholds):
