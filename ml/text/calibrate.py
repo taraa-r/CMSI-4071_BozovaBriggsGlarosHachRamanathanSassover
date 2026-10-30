@@ -3,17 +3,20 @@
 What it does (see ERROR_ANALYSIS.md for the reasoning):
   1. Scores every validation text and splits them into two halves, A and B
      (same mix of human/AI and writing types in each).
-  2. Temperature scaling: finds one number T so that scores mean what they say
+  2. Platt scaling: finds two numbers, a and b, so that scores mean what they say
      ("80% AI" is right about 80% of the time). Fitted on half A.
+     ai_score = 1 / (1 + exp(-(a * margin + b))), where margin = AI logit - human logit.
+     a stretches or squeezes the scores; b shifts them toward AI or human.
+     Temperature scaling (a alone, b = 0) is also fitted, only for comparison.
   3. Chooses the cutoff on half B: the lowest one that keeps false positives
      (human texts called AI) at or below --target-fpr.
   4. Checks each step on the half it did NOT use, so no number is graded on its own answers:
      calibration error is measured on B; F1 and false-positive rate at the cutoff on A.
-  5. Saves calibration.json (T and cutoff, for the server) and reliability.png (chart) to the model folder.
+  5. Saves calibration.json (a, b and cutoff, for the server) and reliability.png (chart) to the model folder.
 
-Dividing by T never changes which text scores higher than which, so it can't change F1 or the
-false-positive rate. It changes the numbers: the cutoff lands somewhere stable instead of
-0.94 vs 0.947, and the percentage shown in the extension is honest.
+Calibration never changes which text scores higher than which (as long as a > 0), so it can't
+change F1 or the false-positive rate. It changes the numbers: the percentage shown in the
+extension becomes honest.
 
 Run from the ml folder, after prepare_data.py:
     python text/calibrate.py --model-dir /content/drive/MyDrive/RealEye/models/<model folder>
@@ -51,18 +54,40 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
-def loss(m, y, t):
-    """Average penalty (cross-entropy) when margins m are divided by temperature t. Lower is better."""
-    p = np.clip(sigmoid(m / t), 1e-12, 1 - 1e-12)
+def logit(p):
+    return np.log(p / (1 - p))
+
+
+def nll(p, y):
+    """Average penalty (cross-entropy) for scores p. Lower is better."""
+    p = np.clip(p, 1e-12, 1 - 1e-12)
     return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
 
 
 def fit_temperature(m, y):
-    """The T that makes scores match reality best (lowest loss), searched from 0.05 to 20."""
+    """The T that makes sigmoid(m / T) match reality best (lowest loss), searched from 0.05 to 20."""
     grid = np.exp(np.linspace(np.log(0.05), np.log(20), 400))
-    best = grid[np.argmin([loss(m, y, t) for t in grid])]
+    best = grid[np.argmin([nll(sigmoid(m / t), y) for t in grid])]
     fine = np.linspace(best * 0.97, best * 1.03, 200)  # zoom in around the best
-    return float(fine[np.argmin([loss(m, y, t) for t in fine])])
+    return float(fine[np.argmin([nll(sigmoid(m / t), y) for t in fine])])
+
+
+def fit_platt(m, y):
+    """The a and b that make sigmoid(a * m + b) match reality best (lowest loss).
+
+    This is a one-feature logistic regression, solved with Newton's method.
+    """
+    x = np.column_stack([m, np.ones_like(m)])
+    w = np.array([1.0, 0.0])  # start from the raw scores
+    for _ in range(100):
+        p = sigmoid(x @ w)
+        gradient = x.T @ (p - y) / len(y)
+        hessian = (x.T * (p * (1 - p))) @ x / len(y) + 1e-9 * np.eye(2)
+        step = np.linalg.solve(hessian, gradient)
+        w -= step
+        if np.abs(step).max() < 1e-10:
+            break
+    return float(w[0]), float(w[1])
 
 
 def calibration_bins(p, y, n_bins=10):
@@ -102,7 +127,16 @@ def metrics(p, y, cutoff):
     }
 
 
-def save_chart(path, before, after, title):
+def print_bins_table(columns, y):
+    """Side-by-side table: for each score group, the share actually AI and the number of texts."""
+    tables = [{b: (frac, n) for b, _, frac, n in calibration_bins(p, y)} for p in columns.values()]
+    print(f"\n{'Score group':<12}" + "".join(f"{name + ': AI (texts)':>26}" for name in columns))
+    for b in range(10):
+        cells = [f"{t[b][0]:>6.0%} ({t[b][1]:>4})" if b in t else "-" for t in tables]
+        print(f"  {b * 10:>3}-{b * 10 + 10:<3}%  " + "".join(f"{c:>26}" for c in cells))
+
+
+def save_chart(path, curves, title):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -112,7 +146,7 @@ def save_chart(path, before, after, title):
         return
     fig, ax = plt.subplots(figsize=(5.5, 5.5))
     ax.plot([0, 1], [0, 1], color="#999", linestyle="--", linewidth=1, label="Perfectly honest scores")
-    for bins, label, color in [(before, "Before calibration", "#d1495b"), (after, "After calibration", "#2e86ab")]:
+    for (label, bins), color in zip(curves.items(), ["#d1495b", "#edae49", "#2e86ab"]):
         ax.plot([b[1] for b in bins], [b[2] for b in bins], marker="o", color=color, label=label)
     ax.set(xlim=(0, 1), ylim=(0, 1), xlabel="Model's AI score (average in each group)",
            ylabel="Share of those texts that are actually AI", title=title)
@@ -136,51 +170,50 @@ def main():
     half_b = df.drop(half_a.index)
     m_a, y_a = half_a["margin"].to_numpy(), half_a["label"].to_numpy()
     m_b, y_b = half_b["margin"].to_numpy(), half_b["label"].to_numpy()
-    print(f"\nHalf A: {len(half_a):,} texts (fit T, then check the cutoff)")
+    print(f"\nHalf A: {len(half_a):,} texts (fit calibration, then check the cutoff)")
     print(f"Half B: {len(half_b):,} texts (choose the cutoff, check calibration)")
 
-    # 1. Temperature, fitted on A.
+    # 1. Calibration, fitted on A. Platt is used; temperature is shown for comparison.
     t = fit_temperature(m_a, y_a)
-    raw_b, cal_b = sigmoid(m_b), sigmoid(m_b / t)
-    ece_before, ece_after = ece(raw_b, y_b), ece(cal_b, y_b)
-    print(f"\n=== 1. Temperature: T = {t:.3f} ===")
-    print("T > 1 means the raw scores were too sure of themselves; T < 1 means they were too timid.")
-    if not 0.06 < t < 19:
-        print("WARNING: T is at the edge of the search range (0.05-20). Check the model scored the texts properly.")
-    print(f"Calibration error (ECE, on half B): {ece_before:.3f} before -> {ece_after:.3f} after")
-    print(f"Loss (on half B): {loss(m_b, y_b, 1):.4f} before -> {loss(m_b, y_b, t):.4f} after")
-    print("\nScore group    before: share AI (texts)    after: share AI (texts)")
-    before_bins = {b: (frac, n) for b, _, frac, n in calibration_bins(raw_b, y_b)}
-    after_bins = {b: (frac, n) for b, _, frac, n in calibration_bins(cal_b, y_b)}
-    for b in range(10):
-        cells = [f"{before_bins[b][0]:>6.0%} ({before_bins[b][1]:>4})" if b in before_bins else f"{'-':>13}",
-                 f"{after_bins[b][0]:>6.0%} ({after_bins[b][1]:>4})" if b in after_bins else f"{'-':>13}"]
-        print(f"  {b * 10:>3}-{b * 10 + 10:<3}%   {cells[0]:>22}    {cells[1]:>22}")
+    a, b = fit_platt(m_a, y_a)
+    raw_b, temp_b, platt_b = sigmoid(m_b), sigmoid(m_b / t), sigmoid(a * m_b + b)
+    print("\n=== 1. Calibration (fitted on half A, measured on half B) ===")
+    print(f"Platt scaling: a = {a:.3f} (stretch; < 1 squeezes, > 1 spreads), "
+          f"b = {b:.3f} (shift; < 0 toward human, > 0 toward AI)")
+    if not 0 < a < 20:
+        print("WARNING: a is outside the expected range (0-20). Check the model scored the texts properly "
+              "(e.g. that every text didn't get nearly the same score).")
+    print(f"Temperature scaling, for comparison: T = {t:.3f}")
+    print(f"\n{'':<22}{'ECE':>8}{'Loss':>10}")
+    for name, p in [("Raw scores", raw_b), ("Temperature", temp_b), ("Platt (used)", platt_b)]:
+        print(f"{name:<22}{ece(p, y_b):>8.3f}{nll(p, y_b):>10.4f}")
+    print("ECE = average gap between the score and how often it's AI (0 = perfectly honest).")
+    print_bins_table({"Raw": raw_b, "Temperature": temp_b, "Platt": platt_b}, y_b)
 
-    # 2. Cutoff, chosen on B (calibrated scores).
-    cutoff = choose_cutoff(cal_b, y_b, args.target_fpr)
-    raw_cutoff = float(sigmoid(np.log(cutoff / (1 - cutoff)) * t)) if 0 < cutoff < 1 else cutoff
+    # 2. Cutoff, chosen on B (Platt scores).
+    cutoff = choose_cutoff(platt_b, y_b, args.target_fpr)
+    raw_cutoff = float(sigmoid((logit(cutoff) - b) / a)) if 0 < cutoff < 1 else cutoff
     print(f"\n=== 2. Cutoff for <= {args.target_fpr:.0%} false positives (chosen on half B) ===")
     print(f"Calibrated cutoff: {cutoff:.4f}   (same as raw score {raw_cutoff:.4f} before calibration)")
 
     # 3. Check the cutoff on A, which played no part in choosing it.
-    cal_a = sigmoid(m_a / t)
-    check = metrics(cal_a, y_a, cutoff)
+    platt_a = sigmoid(a * m_a + b)
+    check = metrics(platt_a, y_a, cutoff)
     print("\n=== 3. Check on half A (not used to choose the cutoff) ===")
     print(f"F1 {check['f1']:.3f} | false-positive rate {check['false_positive_rate']:.1%} | "
           f"recall {check['recall']:.1%} | precision {check['precision']:.1%} | accuracy {check['accuracy']:.1%}")
     print("Targets: F1 >= 0.75 and false-positive rate <= 10% (SRS 5.4.8, 5.4.20)")
 
     print("\nHumans flagged as AI on half A, by writing type:")
-    flagged = (cal_a >= cutoff) & (y_a == 0)
+    flagged = (platt_a >= cutoff) & (y_a == 0)
     by_type = pd.DataFrame({"domain": half_a["domain"].to_numpy(), "human": y_a == 0, "flagged": flagged})
     for name, g in by_type[by_type["human"]].groupby("domain"):
         print(f"  {name:<8} {g['flagged'].mean():>5.0%}  ({g['flagged'].sum()} of {len(g)})")
 
     print("\nOther targets, for comparison (cutoff chosen on B, checked on A):")
     for target in (0.10, 0.07, 0.05, 0.03):
-        c = choose_cutoff(cal_b, y_b, target)
-        r = metrics(cal_a, y_a, c)
+        c = choose_cutoff(platt_b, y_b, target)
+        r = metrics(platt_a, y_a, c)
         print(f"  target {target:>4.0%}: cutoff {c:.4f} -> F1 {r['f1']:.3f}, "
               f"false positives {r['false_positive_rate']:.1%}, recall {r['recall']:.1%}")
 
@@ -189,22 +222,28 @@ def main():
     record = {
         "model": model_dir.name,
         "created": datetime.now().isoformat(timespec="seconds"),
-        "temperature": t,
+        "method": "platt",
+        "a": a,
+        "b": b,
         "cutoff": cutoff,
         "target_false_positive_rate": args.target_fpr,
-        "how_to_use": "margin = logit[1] - logit[0]; ai_score = 1 / (1 + exp(-margin / temperature)); "
+        "how_to_use": "margin = logit[1] - logit[0]; ai_score = 1 / (1 + exp(-(a * margin + b))); "
                       "label AI if ai_score >= cutoff",
         "raw_score_equivalent_of_cutoff": raw_cutoff,
+        "temperature_for_comparison": t,
         "validation_rows": len(df),
-        "split": "validation halved by label and writing type (seed 42): T fit on A, cutoff chosen on B",
-        "ece_on_half_b": {"before": ece_before, "after": ece_after},
+        "split": "validation halved by label and writing type (seed 42): calibration fit on A, cutoff chosen on B",
+        "ece_on_half_b": {"raw": ece(raw_b, y_b), "temperature": ece(temp_b, y_b), "platt": ece(platt_b, y_b)},
         "metrics_on_half_a_at_cutoff": check,
     }
     (model_dir / "calibration.json").write_text(json.dumps(record, indent=2))
-    save_chart(model_dir / "reliability.png", calibration_bins(raw_b, y_b), calibration_bins(cal_b, y_b),
-               f"Reliability on validation half B (T = {t:.2f})")
+    save_chart(model_dir / "reliability.png",
+               {"Raw scores": calibration_bins(raw_b, y_b),
+                f"Temperature (T = {t:.2f})": calibration_bins(temp_b, y_b),
+                f"Platt (a = {a:.2f}, b = {b:.2f})": calibration_bins(platt_b, y_b)},
+               "Reliability on validation half B")
     print(f"\nSaved {model_dir / 'calibration.json'} and reliability.png")
-    print("Next: one final run on the test set with this T and cutoff.")
+    print("Next: one final run on the test set with this calibration and cutoff.")
 
 
 if __name__ == "__main__":

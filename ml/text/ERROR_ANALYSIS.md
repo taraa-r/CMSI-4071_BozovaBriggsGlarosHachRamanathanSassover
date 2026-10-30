@@ -24,8 +24,10 @@ We changed the data prep and training scripts to address both, then retrained (O
 | Retrain in Colab with the changes | Done — `distilroberta-base-20261030-0247` |
 | Re-run `analyze_errors.py` on the new model and compare | Done — see section 4 |
 | Write `calibrate.py` | Done, tested on synthetic scores and a dummy model |
-| Run `calibrate.py` on the new model | **To do** |
-| Final check on the held-out test set | **To do** — run only once, at the end |
+| Run `calibrate.py` on the new model | Done — F1 0.915, 4.1% false positives on held-out half (section 5) |
+| Add Platt scaling to `calibrate.py` | Done, tested on synthetic two-clump scores (ECE 0.066 → 0.008) |
+| Rerun `calibrate.py` with Platt scaling | **To do** |
+| Final test-set run | **To do** — script not written yet |
 
 ## 1. What we found
 
@@ -99,7 +101,7 @@ Not available for the Oct 26 model. The record was in the `checkpoints` folder, 
 | [train_text.py](train_text.py) | Keeps the epoch with the **lowest validation loss** instead of the highest F1. | F1 is already above target. Overconfidence is the problem, and validation loss is what measures it. |
 | [train_text.py](train_text.py) | Saves loss and metrics for every epoch in `metrics.json` (`log_history`). | So we can see whether a second epoch helps or makes the model more overconfident. |
 | [analyze_errors.py](analyze_errors.py) | New script (see below). | Repeatable error analysis for any saved model. |
-| [calibrate.py](calibrate.py) | New script: temperature scaling, cutoff choice, ECE, reliability chart (see section 5). | Makes scores honest and picks the cutoff without grading on the same texts. |
+| [calibrate.py](calibrate.py) | New script: Platt scaling (temperature scaling shown for comparison), cutoff choice, ECE, reliability chart (see section 5). | Makes scores honest and picks the cutoff without grading on the same texts. |
 | [mage.py](mage.py) | Added `domain()`, which gets the writing type from `src`. | Shared by `prepare_data.py` and `analyze_errors.py`. |
 | [COLAB.md](COLAB.md) | Updated the expected `prepare_data.py` output. | The train size now depends on the writing-type balance. |
 
@@ -238,11 +240,69 @@ Dividing by T never changes which text scores higher than which, so **it can't c
 
 To try a different false-positive target: `--target-fpr 0.07`.
 
+### First run: temperature scaling (Oct 29, model `distilroberta-base-20261030-0247`, target 5%)
+
+**Both targets met on texts not used to choose the cutoff:**
+
+| Metric (half A) | Result | Target |
+|---|---|---|
+| False-positive rate | **4.1%** | ≤ 10% |
+| F1 | **0.915** | ≥ 0.75 |
+| Recall (AI caught) | 87.7% | — |
+| Precision | 95.6% | — |
+| Accuracy | 91.8% | — |
+
+**Cutoff:** 0.8794 calibrated, which is a raw score of 0.9475. **T = 1.456.**
+
+**Humans flagged as AI, by writing type (half A):** cmv 2%, eli5 6%, hswag 0%, roct 1%, sci_gen 3%, squad 5%, tldr 5%, wp 3%, **xsum 10%**, yelp 2%. Every type is now at or below 10%; xsum (news summaries) is still the weakest.
+
+**Other targets (cutoff chosen on B, checked on A):**
+
+| Target | Cutoff | F1 | False positives on A | Recall |
+|---|---|---|---|---|
+| 10% | 0.8684 | 0.913 | **10.7%** (over the limit) | 93.0% |
+| 7% | 0.8758 | **0.919** | 5.8% | 89.9% |
+| 5% | 0.8794 | 0.915 | 4.1% | 87.7% |
+| 3% | 0.8826 | 0.886 | 2.9% | 81.8% |
+
+The 10% row shows why we aim lower: a cutoff tuned to exactly 10% on one half went over the limit on the other.
+
+**Calibration only partly worked: ECE 0.108 → 0.093.**
+
+| Score group (after) | Texts | Actually AI |
+|---|---|---|
+| 10–20% | 843 | 1% |
+| 20–30% | 73 | 14% |
+| 30–70% | 77 | 0–15% (small groups) |
+| 70–80% | 43 | 28% |
+| 80–90% | 1,463 | 83% |
+
+- The model puts almost every text into one of two clumps. **The top clump is now honest** (scored about 85%, really 83% AI).
+- **The bottom clump is not:** scored about 13%, really 1% AI. The model is more reliable about "human" than its score says.
+- Temperature scaling has one setting, so it can't fix both clumps at once. Label smoothing capped both ends at about 5% and 95%, but the model's "human" answers are far more reliable than its "AI" answers.
+- **Fix:** Platt scaling (a stretch plus a shift). It can't change F1 or false positives either, but should lower ECE a lot.
+
+### Platt scaling
+
+Temperature scaling divides the margin by T: one setting, so it can only stretch or squeeze scores evenly around 50%. **Platt scaling** uses `a × margin + b`: `a` stretches or squeezes, and `b` shifts everything toward human (negative) or AI (positive). Both clumps here need to move *down* (top: 95% → 84%; bottom: 5% → 1%), which needs the shift.
+
+`calibrate.py` now fits Platt scaling (used for the cutoff and saved to `calibration.json`) and still prints temperature scaling for comparison. The chart shows raw, temperature and Platt curves.
+
+**Tested on made-up data shaped like this model** (two clumps, top 84% AI, bottom 1% AI):
+
+| | ECE |
+|---|---|
+| Raw | 0.081 |
+| Temperature (T = 1.38) | 0.066 |
+| **Platt (a = 0.99, b = −1.27)** | **0.008** |
+
+Platt recovered both clumps (1.5% vs. true 1%, 84.3% vs. true 84%). F1 and false-positive rate were identical before and after.
+
+**Not yet run on the real model.** Expected: about the same cutoff results as above (F1 ≈ 0.915, false positives ≈ 4%) and a much lower ECE.
+- **The cutoff stays in a narrow band** (0.868–0.883 for 3–10% targets), because the AI texts and the hard human texts share the top clump. The server must use the exact saved cutoff, not a rounded one.
+
 ## Next steps
 
-1. **Calibrate** — run `calibrate.py` on the new model (see section 5):
-   ```
-   !python text/calibrate.py --model-dir /content/drive/MyDrive/RealEye/models/distilroberta-base-20261030-0247
-   ```
+1. **Rerun `calibrate.py`** (now with Platt scaling, about 3 minutes on a GPU). Choose the false-positive target: 5% (F1 0.915) or 7% (F1 0.919).
 2. **Final test-set check**, run once: F1, false-positive rate and ECE at the chosen cutoff. The targets are F1 ≥ 0.75 and false-positive rate ≤ 0.10 (SRS 5.4.8, 5.4.20).
 3. If false positives are still too high, try training for 3 epochs (validation loss was still dropping), or `FacebookAI/roberta-base` (`--model FacebookAI/roberta-base`), as planned in [DATASETS.md](DATASETS.md).
