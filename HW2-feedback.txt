@@ -1,0 +1,30 @@
+
+
+HW 2 - Piloni & Miles Textbook
+CMSI 4071 Fall 2026
+
+Category        Weight     Earned
+===========    ========    ======
+Problem 1      [3 pts.]      3.0
+Problem 2      [4 pts.]      4.0
+Problem 3      [6 pts.]      6.0
+Problem 4      [9 pts.]      9.0
+Problem 5      [2 pts.]      2.0
+Problem 6      [7 pts.]      7.0
+Problem 7      [1 pt.]       1.0
+Problem 8      [3 pts.]      3.0
+Problem 9      [5 pts.]      5.0
+Problem 10     [4 pts.]      4.0
+
+      Subtotal [44 max]     44.0
+             Your Total     44.0
+
+      Your Letter grade   A-plus
+
+=================================================
+SPECIFIC COMMENTS AND FEEDBACK
+------------------------------
+
+Good job on this assignment, thoughtful answers and well-written.
+
+Nice work!
