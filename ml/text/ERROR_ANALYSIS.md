@@ -11,7 +11,7 @@ We analyzed its mistakes and found two causes:
 1. **The training data was lopsided by writing type.** Human training texts were mostly Yelp reviews and Q&A. AI texts were spread evenly across all ten writing types. So the model partly learned "news summary / science abstract / story = AI."
 2. **The model is overconfident.** When it's wrong, it's usually very sure: half of its wrong answers came with over 99% confidence.
 
-We changed the data prep and training scripts to address both, then retrained (Oct 29, model `distilroberta-base-20261030-0247`). At the 0.5 cutoff, **false positives dropped from 41% to 26%** and **F1 rose from 0.818 to 0.874**. The model is no longer wrong with 99%+ confidence. With a new cutoff (about 0.94–0.947), validation reaches a 5–10% false-positive rate with F1 above 0.90, meeting both targets on validation. Next: calibrate the scores, choose the cutoff properly, and confirm on the test set. See [Results after retraining](#4-results-after-retraining) and [Next steps](#next-steps).
+We changed the data prep and training scripts to address both, then retrained (Oct 29, model `distilroberta-base-20261030-0247`). At the 0.5 cutoff, **false positives dropped from 41% to 26%** and **F1 rose from 0.818 to 0.874**. The model is no longer wrong with 99%+ confidence. After Platt calibration and a cutoff chosen for ≤ 5% false positives, **the held-out test set (51,002 texts) passes both targets: F1 0.893, false-positive rate 5.9%** (SRS 5.4.8, 5.4.20). The overconfidence fix held up on new data. The main weakness is writing types the model never trained on: on the test set, 61% of human-written CNN news articles and 85% of human dialogue summaries were flagged as AI. See [Final test results](#test-results-nov-4) and [Next steps](#next-steps).
 
 ## Status
 
@@ -29,7 +29,7 @@ We changed the data prep and training scripts to address both, then retrained (O
 | Rerun `calibrate.py` with Platt scaling | Done — honest human scores, loss 0.363 → 0.299, ECE 0.090 (see section 5) |
 | Choose calibration | Done — Platt scaling (see "Which calibration we chose" in section 5) |
 | Write `evaluate_test.py` | Done, tested on hand calculations and a dummy model |
-| Final test-set run | **To do** — run once in Colab (section 6) |
+| Final test-set run | **Done — PASS: F1 0.893, false positives 5.9%** (section 6) |
 
 ## 1. What we found
 
@@ -370,13 +370,84 @@ It saves `test_results.json`, `test_scores.csv` and `reliability_test.png` to th
 ```
 
 **Limits to state in the report:**
-- The test set comes from the same writing types and AI generators as training. It shows how the model does on familiar kinds of text, not on new kinds of writing or newer AI models.
+- **Correction (Nov 4):** we expected the test set to contain only the training writing types. It doesn't. MAGE's test split also has about 3,100 texts from **4 writing types never seen in training** (CNN news, DialogSum dialogue summaries, IMDb movie reviews, PubMed medical abstracts), including text written by **GPT-4** and **paraphrased GPT-4** text. So the test covers both familiar and unfamiliar text. The results below break them out.
 - DistilRoBERTa was pretrained on general web text before fine-tuning, so some human test texts may have been in that general reading, without human/AI labels.
 
-**Results:** *(to fill in after the Colab run)*
+### Test results (Nov 4)
+
+**Saved calibration and cutoff, nothing refitted.** Platt a = 1.216, b = −2.057, cutoff 0.8118. Test set: 51,002 texts (24,242 human, 26,760 AI).
+
+| | Validation (half A) | **Test** | Target |
+|---|---|---|---|
+| F1 | 0.915 | **0.893** | ≥ 0.75 — **PASS** |
+| False-positive rate | 4.1% | **5.9%** | ≤ 10% — **PASS** |
+| Recall (AI caught) | 87.7% | 84.9% | — |
+| Precision | 95.6% | 94.1% | — |
+| Accuracy | 91.8% | 89.3% | — |
+
+- **Balanced 50/50 sample (48,484 texts):** F1 0.890, nearly the same, so the human/AI mix isn't distorting F1.
+- **Leak check:** 356 test texts share their first 200 characters with a training or validation text, likely repeated passages such as SQuAD's Wikipedia paragraphs. Without them: F1 0.892, false positives 5.9%. No effect.
+- **A small drop from validation is expected,** and aiming for 5% left enough room. Much of the drop comes from the unfamiliar writing types: they account for about 280 of the roughly 1,430 false positives. On the 10 familiar types alone, the false-positive rate works out to about 4.9%.
+
+#### By writing type
+
+**Familiar types (seen in training):**
+
+| Type | Humans flagged | AI missed |
+|---|---|---|
+| cmv | 3.4% | 11.6% |
+| eli5 | 2.8% | 19.6% |
+| hswag | 0.7% | 18.4% |
+| roct | 0.5% | 12.2% |
+| sci_gen | 3.2% | 15.2% |
+| squad | 4.6% | 17.0% |
+| tldr | 4.8% | 14.6% |
+| wp | 6.3% | 6.7% |
+| **xsum** | **13.0%** | 10.3% |
+| yelp | 4.5% | 18.0% |
+
+**Unfamiliar types (never seen in training):**
+
+| Type | Humans flagged | AI missed |
+|---|---|---|
+| **dialogsum** (dialogue summaries) | **85.2%** | 18.0% |
+| **cnn** (news articles) | **61.0%** | 23.5% |
+| imdb (movie reviews) | 8.7% | **60.2%** |
+| pubmed (medical abstracts) | 3.5% | **81.5%** |
+| GPT-4 text (4 types) | — | 3.0–13.0% |
+| Paraphrased GPT-4 text (4 types) | — | 5.0–51.5% |
+
+- **xsum (BBC news summaries) is still the weakest familiar type,** at 13% on its own.
+- **Human-written news and dialogue the model hasn't seen are mostly flagged as AI.** It's the same "formal, factual = AI" pattern, only stronger.
+- **AI-written medical abstracts and movie reviews mostly go undetected.**
+- **GPT-4 text is caught well,** even though no GPT-4 text was in training.
+- **Paraphrasing helps AI text avoid detection** (up to 51.5% missed for PubMed).
+- **Extension impact:** it runs on real web pages, many of which are news. The real-world false-positive rate on news could be much higher than 5.9%.
+
+#### Overconfidence on test
+
+| | Validation half B | Test |
+|---|---|---|
+| Loss, raw | 0.386 | 0.415 |
+| Loss, calibrated | 0.299 | 0.334 |
+| ECE, calibrated | 0.090 | 0.098 |
+
+| Wrong answers that were… | Oct 26 model (validation) | New model, raw (test) | New model, calibrated (test) |
+|---|---|---|---|
+| Over 90% confident | 75% | 33% | 11% |
+| Over 99% confident | 51% | **0%** | 7% |
+
+- **The overconfidence fix held up:** test loss and ECE are only slightly worse than validation, and calibration still helps (loss 0.415 → 0.334).
+- **The score groups match validation:** calibrated 0–10% → 3% AI, 70–80% → 41% AI, 80–90% → 92% AI. The same weak spot in the 70–80% band shows up again.
+- **The 7% over 99% after calibration** are AI texts the model scored very low, likely the missed PubMed and IMDb texts. Platt's shift toward "human" makes those scores look extra certain. It's a small group.
+
+**For the report:** the model meets both requirements on the held-out test set (F1 0.893, 5.9% false positives). It is reliable on the 10 writing types it was trained on, but it struggles with unfamiliar writing: human news and dialogue are often flagged as AI (61%, 85%), and AI-written medical and review text often goes undetected.
+
+Saved in Drive (`distilroberta-base-20261030-0247/`): `test_results.json`, `test_scores.csv`, `reliability_test.png`.
 
 ## Next steps
 
-1. **Final test-set run** (section 6), once. The targets are F1 ≥ 0.75 and false-positive rate ≤ 0.10 (SRS 5.4.8, 5.4.20).
+1. **Final test-set run: done** (section 6). Both targets pass. Don't change the cutoff or calibration based on test results.
 2. **Wire the model into the server:** `margin = logit[1] − logit[0]`, `ai_score = 1 / (1 + exp(−(a × margin + b)))`, AI if `ai_score ≥ cutoff`, using the values in `calibration.json`. Show the label first in the extension popup.
-3. If false positives are still too high, try training for 3 epochs (validation loss was still dropping), or `FacebookAI/roberta-base` (`--model FacebookAI/roberta-base`), as planned in [DATASETS.md](DATASETS.md).
+3. **Reduce false positives on unfamiliar writing (future work):** add human-written news, dialogue and other web text to training (the extension's real inputs), and test on writing types held out from training. Paraphrased AI text is another known gap.
+4. If false positives are still too high, try training for 3 epochs (validation loss was still dropping), or `FacebookAI/roberta-base` (`--model FacebookAI/roberta-base`), as planned in [DATASETS.md](DATASETS.md).
