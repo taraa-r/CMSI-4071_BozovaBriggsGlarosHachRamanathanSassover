@@ -75,6 +75,28 @@ Write those three numbers down and share them with the team. The goal for the fi
 
 You should see a folder like `distilroberta-base-20261023-1415`. It contains the model (~330 MB) and `metrics.json`. Share the `RealEye` Drive folder with your teammate.
 
+## 7. Calibrate and test (after training)
+
+Check that the GPU is connected first. You should see **Tesla T4**:
+
+```
+!nvidia-smi
+```
+
+Calibrate (about 3 minutes). This saves `calibration.json` and `reliability.png` in the model folder:
+
+```
+!python text/calibrate.py --model-dir /content/drive/MyDrive/RealEye/models/<model folder>
+```
+
+**Final test, run only once** when the model, calibration and cutoff are final (about 10–20 minutes). This saves `test_results.json`, `test_scores.csv` and `reliability_test.png`:
+
+```
+!python text/evaluate_test.py --model-dir /content/drive/MyDrive/RealEye/models/<model folder>
+```
+
+Replace `<model folder>` with the real name, without the `< >`. Find it with `!ls /content/drive/MyDrive/RealEye/models`.
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -82,4 +104,6 @@ You should see a folder like `distilroberta-base-20261023-1415`. It contains the
 | `CUDA out of memory` | Run `!python text/train_text.py --batch-size 8` |
 | "Cannot connect to GPU backend" | Free GPU time is used up for now. Try again later or with another Google account. |
 | Session disconnected mid-training | Start again from step 3. Keep the tab open and in front while it trains. |
+| `operator torchvision::nms does not exist` | Run `!pip uninstall -y torchvision`, then **Runtime → Restart session**, then `%cd /content/realeye/ml` |
+| Scripts say `cpu` instead of `cuda` | No GPU. **Runtime → Change runtime type → T4 GPU**, then redo the setup cells |
 | Want to compare with RoBERTa | `!python text/train_text.py --model FacebookAI/roberta-base` (about 2× slower) |

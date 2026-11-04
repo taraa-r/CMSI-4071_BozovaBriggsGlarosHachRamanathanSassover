@@ -27,7 +27,9 @@ We changed the data prep and training scripts to address both, then retrained (O
 | Run `calibrate.py` on the new model | Done — F1 0.915, 4.1% false positives on held-out half (section 5) |
 | Add Platt scaling to `calibrate.py` | Done, tested on synthetic two-clump scores (ECE 0.066 → 0.008) |
 | Rerun `calibrate.py` with Platt scaling | Done — honest human scores, loss 0.363 → 0.299, ECE 0.090 (see section 5) |
-| Final test-set run | **To do** — script not written yet |
+| Choose calibration | Done — Platt scaling (see "Which calibration we chose" in section 5) |
+| Write `evaluate_test.py` | Done, tested on hand calculations and a dummy model |
+| Final test-set run | **To do** — run once in Colab (section 6) |
 
 ## 1. What we found
 
@@ -322,8 +324,59 @@ Platt recovered both clumps (1.5% vs. true 1%, 84.3% vs. true 84%). F1 and false
 - **Optional next step:** isotonic regression, a more flexible calibration that can follow the sharp jump. It needs a lookup table in the server instead of two numbers.
 - **The cutoff stays in a narrow band** (0.868–0.883 for 3–10% targets), because the AI texts and the hard human texts share the top clump. The server must use the exact saved cutoff, not a rounded one.
 
+### Which calibration we chose: Platt scaling
+
+| (validation half B) | Raw | Temperature | Platt |
+|---|---|---|---|
+| Loss (lower = closer to reality) | 0.386 | 0.363 | **0.299** |
+| ECE | 0.108 | 0.093 | **0.090** |
+| Human texts (really ~1–2% AI) shown as | ~5% | ~13% | **~2%** |
+| F1 / false positives at the cutoff | 0.915 / 4.1% | 0.915 / 4.1% | 0.915 / 4.1% |
+
+- **Platt can shift scores, not just stretch them.** Both clumps needed to move toward "human" by different amounts; temperature could only compromise.
+- **Much lower loss**, so its scores match reality better overall.
+- **No cost in detection:** both methods flag exactly the same texts.
+- **Known weak spot:** texts scored 70–80% are really only 42% AI. The extension should show the label first and the percentage second.
+
+**Current threshold:** a text is labeled AI if its Platt-calibrated score is **≥ 0.8118** (a = 1.216, b = −2.057). That equals a raw softmax score of 0.9475, chosen for ≤ 5% false positives. All three values are saved in `calibration.json` in the model's Drive folder. The Oct 26 cutoff of 0.999 does not apply to this model.
+
+## 6. Final test-set run (`evaluate_test.py`)
+
+**The test set:** MAGE's own test split (`yaful/MAGE` on Hugging Face), cleaned the same way as the other splits: 200–5,000 characters, no duplicates. That leaves 51,002 texts in `ml/data/text/test.jsonl`.
+
+**How it's kept unseen:**
+- **Overlaps are removed when the data is built.** `prepare_data.py` removes any validation text that also appears in test, and any training text that appears in validation or test.
+- **No other script reads it.** `train_text.py` loads only train and validation. `analyze_errors.py` and `calibrate.py` default to validation. The epoch, calibration and cutoff were all chosen without it.
+- **`evaluate_test.py` checks for leaks again before scoring.** It counts test texts that match a training or validation text exactly, or share the same first 200 characters (to catch near-copies). If it finds any, it also reports results without them.
+- **It runs once.** It refuses to run again if `test_results.json` exists, unless `--force` is passed. Changing anything after seeing test results would make them optimistic.
+
+**What it does:** applies the saved calibration and cutoff from `calibration.json` exactly as they are, with nothing refitted, and prints:
+1. The leak check
+2. F1, false-positive rate, recall, precision and accuracy, with pass/fail on the SRS targets
+3. F1 on a balanced 50/50 sample. The test set may not be 50/50, and F1 depends on the mix, so this is the fair comparison with validation.
+4. Results by writing type
+5. **Overconfidence checks**, since overconfidence was the original problem:
+   - **Loss**, raw and calibrated. This is the main measure of confident mistakes. Compare it with validation half B (raw 0.386, Platt 0.299).
+   - **ECE**, raw and calibrated. Compare it with validation half B (Platt 0.090).
+   - **How sure the model was on the texts it got wrong**: the share over 90% and over 99% confident. The Oct 26 model was 75% and 51% on validation.
+
+   If test loss and ECE land close to the validation numbers, the overconfidence fix held up on new data.
+
+It saves `test_results.json`, `test_scores.csv` and `reliability_test.png` to the model folder.
+
+**Run it** (Colab, GPU, about 10–20 minutes for 51k texts):
+```
+!python text/evaluate_test.py --model-dir /content/drive/MyDrive/RealEye/models/distilroberta-base-20261030-0247
+```
+
+**Limits to state in the report:**
+- The test set comes from the same writing types and AI generators as training. It shows how the model does on familiar kinds of text, not on new kinds of writing or newer AI models.
+- DistilRoBERTa was pretrained on general web text before fine-tuning, so some human test texts may have been in that general reading, without human/AI labels.
+
+**Results:** *(to fill in after the Colab run)*
+
 ## Next steps
 
-1. **Decide on calibration:** keep Platt (saved now), or try isotonic regression. Choose the false-positive target: 5% (F1 0.915, saved now) or 7% (F1 0.919).
-2. **Final test-set check**, run once: F1, false-positive rate and ECE at the chosen cutoff. The targets are F1 ≥ 0.75 and false-positive rate ≤ 0.10 (SRS 5.4.8, 5.4.20).
+1. **Final test-set run** (section 6), once. The targets are F1 ≥ 0.75 and false-positive rate ≤ 0.10 (SRS 5.4.8, 5.4.20).
+2. **Wire the model into the server:** `margin = logit[1] − logit[0]`, `ai_score = 1 / (1 + exp(−(a × margin + b)))`, AI if `ai_score ≥ cutoff`, using the values in `calibration.json`. Show the label first in the extension popup.
 3. If false positives are still too high, try training for 3 epochs (validation loss was still dropping), or `FacebookAI/roberta-base` (`--model FacebookAI/roberta-base`), as planned in [DATASETS.md](DATASETS.md).

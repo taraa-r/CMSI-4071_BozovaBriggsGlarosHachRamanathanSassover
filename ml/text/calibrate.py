@@ -234,6 +234,7 @@ def main():
         "validation_rows": len(df),
         "split": "validation halved by label and writing type (seed 42): calibration fit on A, cutoff chosen on B",
         "ece_on_half_b": {"raw": ece(raw_b, y_b), "temperature": ece(temp_b, y_b), "platt": ece(platt_b, y_b)},
+        "loss_on_half_b": {"raw": nll(raw_b, y_b), "temperature": nll(temp_b, y_b), "platt": nll(platt_b, y_b)},
         "metrics_on_half_a_at_cutoff": check,
     }
     (model_dir / "calibration.json").write_text(json.dumps(record, indent=2))
