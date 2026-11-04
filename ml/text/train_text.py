@@ -43,6 +43,8 @@ def parse_args():
                         help="Tokens per text; longer texts are cut off for the model")
     parser.add_argument("--limit", type=int, default=None,
                         help="Use only this many train and validation rows (for quick tests)")
+    parser.add_argument("--label-smoothing", type=float, default=0.1,
+                        help="Train toward 95/5 instead of 100/0 so scores don't pile up at 0.999+ (0 = off)")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -113,7 +115,10 @@ def main():
             save_strategy="epoch",
             save_total_limit=1,
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            # Keep the epoch whose confidence best matched reality. F1 is already above target;
+            # overconfidence is the problem, and validation loss is what measures it.
+            metric_for_best_model="eval_loss",
+            label_smoothing_factor=args.label_smoothing,
             fp16=torch.cuda.is_available(),
             logging_steps=50,
             report_to="none",
@@ -126,6 +131,7 @@ def main():
         compute_metrics=compute_metrics,
     )
     trainer.train()
+    history = list(trainer.state.log_history)  # before evaluate() adds a repeat of the last epoch
 
     metrics = trainer.evaluate()
     trainer.save_model(str(out_dir))  # model + tokenizer, loadable with from_pretrained(out_dir)
@@ -139,6 +145,8 @@ def main():
         "train_rows": len(data["train"]),
         "validation_rows": len(data["validation"]),
         "validation_metrics_at_0.5": {k.removeprefix("eval_"): v for k, v in metrics.items()},
+        # Loss and metrics after every epoch (the checkpoints folder holding this gets deleted).
+        "log_history": history,
     }
     (out_dir / "metrics.json").write_text(json.dumps(record, indent=2))
 
