@@ -37,3 +37,30 @@ Changes needed for the code to match the SRS and the SDD architecture. Check ite
 - [ ] Return skipped items (with the reason) instead of dropping them, and show them in the popup
 - [ ] Show a scan-limit notice when the cap is reached
 - [ ] Update `extract.test.ts` for the new rules
+
+## 3. Pin Hugging Face model and dataset revisions
+
+**Files:** `ml/text/mage.py`, `ml/text/train_text.py`
+**SRS:** 5.3.4.7 (base model record), 5.3.4.11 (dataset and model version), 5.5.1.6 (exact model revisions)
+
+The SDD (6.1.2.31) records these revisions. Today the code downloads whatever is latest, so a future change on Hugging Face would silently change training.
+
+| | Revision (commit) |
+|---|---|
+| `distilbert/distilroberta-base` | `fb53ab8802853c8e4fbdbcd0529f21fc6f459b2b` |
+| `yaful/MAGE` | `342663f0a2b775455c023f5d36a1341ff0ec5402` |
+
+- [ ] Pass `revision=` for MAGE in `load_dataset("yaful/MAGE", ...)` (`mage.py`)
+- [ ] Pass `revision=` to `AutoTokenizer.from_pretrained` and `AutoModelForSequenceClassification.from_pretrained` for the base model (`train_text.py`)
+- [ ] Record both revisions in `manifest.json` and `metrics.json`
+
+## 4. Save the confusion matrix in evaluation results
+
+**Files:** `ml/text/calibrate.py` (the `metrics` function), `ml/text/evaluate_test.py`
+**SRS:** 5.3.4.9 (precision, recall, F1, and a confusion matrix on held-out test data), 5.3.4.10 (class counts)
+
+`metrics()` computes the true/false positive and negative counts but only returns the rates, so `test_results.json` has no confusion matrix.
+
+- [ ] Return `tp`, `fp`, `tn`, `fn` from `metrics()` alongside the rates
+- [ ] Print the confusion matrix (actual human/AI × predicted human/AI) in `evaluate_test.py` and save it in `test_results.json`
+- [ ] For the current release, recompute it from the saved `test_scores.csv` at the saved cutoff (0.8118), without rerunning the model, so the test set is not used again
