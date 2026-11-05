@@ -43,16 +43,16 @@ Changes needed for the code to match the SRS and the SDD architecture. Check ite
 **Files:** `ml/text/mage.py`, `ml/text/train_text.py`
 **SRS:** 5.3.4.7 (base model record), 5.3.4.11 (dataset and model version), 5.5.1.6 (exact model revisions)
 
-The SDD (6.1.2.31) records these revisions. Today the code downloads whatever is latest, so a future change on Hugging Face would silently change training.
+The SDD (6.1.2.31) records these revisions. The code now loads them by commit, so a future change on Hugging Face cannot silently change training. The October 2026 training run predates this change and did not record its revision.
 
 | | Revision (commit) |
 |---|---|
 | `distilbert/distilroberta-base` | `fb53ab8802853c8e4fbdbcd0529f21fc6f459b2b` |
 | `yaful/MAGE` | `342663f0a2b775455c023f5d36a1341ff0ec5402` |
 
-- [ ] Pass `revision=` for MAGE in `load_dataset("yaful/MAGE", ...)` (`mage.py`)
-- [ ] Pass `revision=` to `AutoTokenizer.from_pretrained` and `AutoModelForSequenceClassification.from_pretrained` for the base model (`train_text.py`)
-- [ ] Record both revisions in `manifest.json` and `metrics.json`
+- [x] Pass `revision=` for MAGE in `load_dataset("yaful/MAGE", ...)` (`mage.py`)
+- [x] Pass `revision=` to `AutoTokenizer.from_pretrained` and `AutoModelForSequenceClassification.from_pretrained` for the base model (`train_text.py`)
+- [x] Record both revisions in `manifest.json` and `metrics.json`
 
 ## 4. Save the confusion matrix in evaluation results
 

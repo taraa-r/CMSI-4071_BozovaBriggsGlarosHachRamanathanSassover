@@ -30,6 +30,10 @@ ML_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ML_DIR / "data" / "text"
 MODELS_DIR = ML_DIR / "models" / "text"
 LABELS = {0: "human", 1: "ai"}
+# Exact base-model versions (Hugging Face commits), so every run starts from the same weights.
+BASE_MODEL_REVISIONS = {
+    "distilbert/distilroberta-base": "fb53ab8802853c8e4fbdbcd0529f21fc6f459b2b",  # unchanged since Feb 19, 2024
+}
 
 
 def parse_args():
@@ -45,6 +49,8 @@ def parse_args():
                         help="Use only this many train and validation rows (for quick tests)")
     parser.add_argument("--label-smoothing", type=float, default=0.1,
                         help="Train toward 95/5 instead of 100/0 so scores don't pile up at 0.999+ (0 = off)")
+    parser.add_argument("--revision", default=None,
+                        help="Hugging Face commit of the base model (default: the pinned one in BASE_MODEL_REVISIONS)")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -83,7 +89,11 @@ def main():
         for split in data:
             data[split] = data[split].shuffle(seed=args.seed).select(range(min(args.limit, len(data[split]))))
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    revision = args.revision or BASE_MODEL_REVISIONS.get(args.model)
+    if revision is None:
+        print(f"WARNING: no pinned revision for {args.model}; using the latest version. "
+              "Add it to BASE_MODEL_REVISIONS or pass --revision so the run can be reproduced.")
+    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=revision)
     data = data.map(
         lambda batch: tokenizer(batch["text"], truncation=True, max_length=args.max_length),
         batched=True,
@@ -92,6 +102,7 @@ def main():
 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model,
+        revision=revision,
         num_labels=2,
         id2label=LABELS,
         label2id={name: i for i, name in LABELS.items()},
@@ -138,7 +149,10 @@ def main():
     record = {
         "run": run_name,
         "base_model": args.model,
+        "base_model_revision": revision or "latest (not pinned)",
         "dataset": "yaful/MAGE (see data/text/manifest.json)",
+        "dataset_revision": json.loads((DATA_DIR / "manifest.json").read_text()).get("dataset_revision", "not recorded")
+        if (DATA_DIR / "manifest.json").exists() else "not recorded",
         "trained": datetime.now().isoformat(timespec="seconds"),
         "device": device,
         "settings": vars(args),

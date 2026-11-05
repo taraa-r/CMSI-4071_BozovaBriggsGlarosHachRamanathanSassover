@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from mage import MAX_CHARS, MIN_CHARS, clean, domain, load_raw
+from mage import MAGE_REVISION, MAX_CHARS, MIN_CHARS, clean, domain, load_raw
 
 SEED = 42
 DEFAULT_TRAIN_PER_CLASS = 40_000
@@ -91,6 +91,7 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     manifest = {
         "dataset": "yaful/MAGE",
+        "dataset_revision": MAGE_REVISION,
         "created": date.today().isoformat(),
         "seed": SEED,
         "labels": {"0": "human", "1": "AI"},

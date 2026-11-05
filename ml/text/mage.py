@@ -8,6 +8,9 @@ from datasets import load_dataset
 MIN_CHARS = 200  # SRS 5.5.3, same limits as the extension
 MAX_CHARS = 5000
 SPLITS = ["train", "validation", "test"]
+# Exact dataset version (Hugging Face commit), so every run uses the same data.
+# Main branch of yaful/MAGE; unchanged since May 22, 2024.
+MAGE_REVISION = "342663f0a2b775455c023f5d36a1341ff0ec5402"
 
 
 def domain(src: str) -> str:
@@ -21,7 +24,7 @@ def normalize(text: str) -> str:
 
 def load_raw() -> dict[str, pd.DataFrame]:
     """All MAGE splits, whitespace-normalized, with labels flipped to 0 = human, 1 = AI."""
-    mage = load_dataset("yaful/MAGE")
+    mage = load_dataset("yaful/MAGE", revision=MAGE_REVISION)
     splits = {}
     for name in SPLITS:
         df = mage[name].to_pandas()
