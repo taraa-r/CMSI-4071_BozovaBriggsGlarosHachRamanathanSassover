@@ -1,0 +1,396 @@
+
+Documentation Feedback ~ Deliverable #4
+Software Design Document ~ Architecture
+CMSI 4071 Fall 2026
+=======================================
+
+INTRODUCTION SECTION:
+   System objectives section
+      Strengths
+         Outstanding objective definition.
+         Clearly tied to user needs.
+         Includes usability, accessibility, privacy, quality, and
+            maintainability goals.
+         Connects objectives directly to measurable requirements.
+         Defines architectural priorities clearly.
+         Strong discussion of uncertainty communication.
+      Suggestions
+         Include a brief objective related to operational monitoring
+            and maintainability.
+         Explicitly mention availability expectations.
+
+   Hardware, software, and human interfaces section
+      Strengths
+         Extremely thorough.
+         Covers all major hardware interfaces.
+         Covers all major software interfaces.
+         Covers human interfaces comprehensively.
+         Consistently describes interface responsibilities rather than
+            merely listing technologies.
+         Strong architectural treatment of external dependencies.
+      Suggestions
+         Some subsections contain implementation details better suited to
+            detailed design.
+         Several library sections could be shortened and summarized into
+            higher-level architectural responsibilities.
+      CLIENT COMPUTER
+         Strengths
+            Clearly defines deployment assumptions.
+            Separates client and server responsibilities.
+            Consistent with performance requirements.
+         Suggestions
+            Briefly discuss browser resource constraints as an architectural
+               consideration.
+      KEYBOARD
+         Strengths
+            Excellent accessibility treatment.
+            Strong alignment with accessibility requirements.
+            Clearly documents full keyboard workflows.
+         Suggestions
+            Could more explicitly reference ownership by the Extension
+               Interface CSC.
+      MOUSE OR TRACKPAD
+         Strengths
+            Appropriate human-interface description.
+            Consistent with expected workflows.
+         Suggestions
+            Architectural significance could be stated more directly.
+      DISPLAY
+         Strengths
+            Strong accessibility treatment.
+            Clearly references display requirements.
+            Properly connects UI constraints to requirements.
+         Suggestions
+            None of significance.
+      ANALYSIS SERVER HOST
+         Strengths
+            Clear deployment responsibilities.
+            Good separation between execution and training.
+            Consistent with the deployment environment.
+         Suggestions
+            Include high-level scalability assumptions.
+            Clarify expected growth limits for the baseline deployment.
+      MODEL TRAINING HARDWARE
+         Strengths
+            Clear separation of runtime and training concerns.
+            Consistent with Evaluation CSC responsibilities.
+         Suggestions
+            More explicitly discuss reproducibility implications.
+      NETWORK INTERFACE
+         Strengths
+            Clearly describes communication paths.
+            Identifies required protocols.
+            Consistent with security requirements.
+         Suggestions
+            Include trust-boundary discussion.
+      GOOGLE CHROME BROWSER
+         Strengths
+            Strong architectural description.
+            Clearly identifies browser responsibilities.
+            Properly handles restricted pages.
+         Suggestions
+            Clarify how browser version updates affect qualification.
+      CHROME EXTENSION PLATFORM
+         Strengths
+            One of the strongest interface sections.
+            Explicit permission model.
+            Excellent alignment with requirements.
+            Strong security perspective.
+         Suggestions
+            None of significance.
+      REALEYE REST API
+         Strengths
+            Excellent API definition.
+            Clearly identifies contracts.
+            Provides error semantics.
+            Good architectural abstraction.
+         Suggestions
+            Include API versioning strategy.
+      C2PA CONTENT CREDENTIALS VERIFICATION
+         Strengths
+            Outstanding interface description.
+            Strong security treatment.
+            Clearly identifies status semantics.
+         Suggestions
+            Move some library-selection rationale into detailed design.
+      SYNTHID WATERMARK DETECTOR
+         Strengths
+            Clean architectural abstraction.
+            Handles unavailable services properly.
+            Consistent with requirements.
+         Suggestions
+            Discuss authorization lifecycle assumptions.
+      SHARED REPORT STORAGE
+         Strengths
+            Clearly identifies persistence ownership.
+            Good privacy treatment.
+            Aligns well with requirements.
+         Suggestions
+            Briefly describe backup assumptions.
+      THIRD-PARTY LIBRARIES, MODELS, AND DATASETS
+         Strengths
+            Every dependency has a clear purpose.
+            Dependencies are connected to architectural responsibilities.
+            Reproducibility considerations are excellent.
+         Suggestions
+            This material is more detailed than normally expected for an
+               architectural SDD.
+            Summarize common dependencies where possible.
+            Reduce exact-version emphasis.
+      HUMAN INTERFACE
+         Strengths
+            Excellent description of user-facing architecture.
+            Strong accessibility coverage.
+            Clearly explains popup, inline warning, and report-view surfaces.
+            Consistent with requirements and architectural structure.
+         Suggestions
+            Explicitly map interface surfaces to CSC ownership.
+
+
+ARCHITECTURAL DESIGN SECTION:
+   Major software components section
+      Strengths
+         Excellent CSC decomposition.
+         Strong requirement traceability.
+         Functional and performance coverage mapping is outstanding.
+         Appropriate architectural abstraction.
+      Suggestions
+         Add a component interaction overview diagram reference before
+            detailed descriptions.
+      EXTENSION INTERFACE CSC
+         Strengths
+            Comprehensive responsibility definition.
+            Strong lifecycle ownership definition.
+            Excellent accessibility treatment.
+            Direct mapping to requirements.
+         Suggestions
+            Clarify ownership boundaries around client-side batching.
+      PAGE INTERACTION CSC
+         Strengths
+            Strong decomposition into extraction and annotation concerns.
+            Excellent treatment of permissions.
+            Well-aligned with requirements.
+         Suggestions
+            Discuss performance implications of large-page extraction.
+      SERVER CSC
+         Strengths
+            One of the strongest architectural sections.
+            Excellent decomposition into CSUs.
+            Strong privacy design.
+            Strong security treatment.
+            Clear ownership boundaries.
+            Strong architectural rationale.
+         Suggestions
+            Explicitly identify concurrency-management strategy.
+            Briefly discuss horizontal scaling possibilities.
+      ANALYSIS API CSU
+         Strengths
+            Excellent validation responsibilities.
+            Strong ownership definition.
+            Clear boundaries.
+         Suggestions
+            None of significance.
+      TEXT AND IMAGE INFERENCE CSU
+         Strengths
+            Excellent handling of model execution.
+            Strong discussion of preprocessing consistency.
+            Good explanation of long-text limitations.
+         Suggestions
+            Some inference specifics approach detailed design.
+      C2PA AND ACCESSIBLE SYNTHID CSU
+         Strengths
+            Clear separation from classifier logic.
+            Excellent evidence-state design.
+         Suggestions
+            None of significance.
+      WARNING INTERPRETATION CSU
+         Strengths
+            Outstanding architectural treatment.
+            Faithful implementation of SRS precedence rules.
+            Strong rationale.
+         Suggestions
+            None of significance.
+      SHARING AND REPORT VIEWER CSU
+         Strengths
+            Excellent privacy-conscious design.
+            Strong link-lifetime controls.
+            Good separation from analysis functionality.
+         Suggestions
+            Briefly discuss report-load scalability.
+      OPERATIONS AND MONITORING CSU
+         Strengths
+            Valuable architectural addition.
+            Explicit monitoring and observability support.
+            Good privacy controls.
+         Suggestions
+            Clarify operational metrics retained long-term versus
+               transiently.
+      EVALUATION CSC
+         Strengths
+            Exceptional treatment of model lifecycle.
+            Strong traceability.
+            Excellent reproducibility discussion.
+            Performance requirements are strongly integrated.
+         Suggestions
+            Distinguish architectural decisions from evaluation methodology
+               details more clearly.
+
+   Major software interactions section
+      Strengths
+         One of the strongest sections.
+         Clear ownership boundaries.
+         Strong lifecycle reasoning.
+         Explicit treatment of cancellation and failure handling.
+         Excellent articulation of component communication.
+      Suggestions
+         Add a short interaction overview table.
+      SCAN LIFECYCLE AND OWNERSHIP
+         Strengths
+            Excellent ownership model.
+            Strong cancellation handling.
+            Clear interaction boundaries.
+         Suggestions
+            None of significance.
+      POPUP AND PAGE SCRIPTS
+         Strengths
+            Responsibilities are clearly divided.
+            Good treatment of synchronization.
+         Suggestions
+            None of significance.
+      POPUP AND SERVICE WORKER
+         Strengths
+            Strong permission-boundary treatment.
+            Clear retrieval responsibilities.
+         Suggestions
+            None of significance.
+      EXTENSION AND ANALYSIS SERVER
+         Strengths
+            Excellent batching architecture.
+            Strong handling of limits and failures.
+            Good consistency with requirements.
+         Suggestions
+            Discuss retry strategy in more detail.
+      INTERACTIONS INSIDE THE SERVER
+         Strengths
+            Excellent separation of independent checks.
+            Strong concurrency model.
+            Clearly defined execution ordering.
+         Suggestions
+            Include a short note about resource contention if multiple
+               scans run concurrently.
+      SERVER AND SQLITE
+         Strengths
+            Clear persistence ownership.
+            Maintains architectural simplicity.
+         Suggestions
+            Discuss migration path if storage requirements grow.
+      SERVER AND EXTERNAL EVIDENCE SERVICES
+         Strengths
+            Strong abstraction boundaries.
+            Proper credential isolation.
+         Suggestions
+            None of significance.
+      EVALUATION CSC AND SERVER CSC
+         Strengths
+            Excellent release-management architecture.
+            Strong traceability and reproducibility support.
+         Suggestions
+            None of significance.
+      EVALUATION CSC AND EXTERNAL DATA SOURCES
+         Strengths
+            Appropriate architectural treatment.
+         Suggestions
+            Could briefly discuss dataset-version governance.
+      SHARE-LINK RECIPIENTS
+         Strengths
+            Correct scope.
+            Clear distinction from authenticated workflows.
+         Suggestions
+            None of significance.
+
+   Architectural design diagrams section
+      Strengths
+         Excellent set of architectural views.
+         All major architectural concerns are represented.
+         Diagrams align closely with the textual architecture.
+         Diagram coverage exceeds typical capstone quality.
+      Suggestions
+         Cross-reference figures more frequently throughout the body.
+      USE CASE DIAGRAM
+         Strengths
+            Excellent representation of user goals.
+            Captures extension-specific workflows.
+            Includes administrator responsibilities.
+         Suggestions
+            None of significance.
+      COMPONENT AND DEPLOYMENT DIAGRAM
+         Strengths
+            One of the strongest diagrams.
+            Clearly communicates runtime deployment.
+            Properly shows offline evaluation workflow.
+            Strong separation of concerns.
+         Suggestions
+            Explicitly label trust boundaries.
+      CLASS AND PACKAGE DIAGRAM
+         Strengths
+            Appropriate architectural abstraction.
+            Good package-level decomposition.
+            Clearly communicates dependencies.
+         Suggestions
+            Emphasize interface contracts visually.
+      ACTIVITY DIAGRAM WITH SWIM LANES
+         Strengths
+            Excellent interaction overview.
+            Clearly captures batching, permissions, failure paths,
+               cancellation, and concurrency.
+            Strong consistency with textual interactions.
+         Suggestions
+            Consider adding a second diagram for selected-content scans.
+
+OVERALL ASSESSMENT:
+   Category                            Points
+   -----------------------------       ------
+   INTRODUCTION:
+      System objectives                1 of 1
+      H/W, S/W, Human I/F              2 of 2
+
+   ARCHITECTURAL DESIGN SECTION:
+      Major software components        2 of 2
+      Major software interactions      2 of 2
+      Architectural design diagrams    3 of 3
+                                       ======
+                                           10
+   ------------------------------------------------------
+   Total Percentage:  10/10 = 100% which is an A-plus
+
+COMMENTS:
+
+The architectural SDD is exceptionally strong and represents one of the most
+complete architectural design documents among senior capstone projects.  It
+follows the prescribed architectural structure closely, maintains direct
+traceability to the CSC and CSU decomposition in the requirements, and
+consistently focuses on responsibilities, interfaces, quality attributes,
+and major design decisions.
+
+The strongest aspects are architectural rigor, requirements traceability,
+explicit interface definitions, quality-attribute treatment, interaction
+design, security considerations, performance-awareness, and excellent
+architectural diagrams. Very few gaps were identified beyond some
+implementation detail creep and a small number of architectural assumptions
+that could be documented more explicitly.
+
+The document demonstrates mature architectural design skills, outstanding
+requirements traceability, strong quality-attribute awareness, thoughtful
+interface definitions, and excellent component decomposition.  It is
+unusually complete for a senior capstone project and closely follows the
+expected SDD guidance.
+
+The strongest sections are the System Objectives, Server CSC, Evaluation
+CSC, Major Software Interactions, and Architectural Diagrams.  The primary
+improvement opportunities are reducing a small amount of
+implementation-level detail, strengthening discussion of scalability
+assumptions, documenting a few additional architectural tradeoffs, and
+explicitly identifying trust boundaries within the deployment architecture.
+
+Overall Rating: Exceptional Architectural SDD
+
