@@ -224,3 +224,6 @@ extension/dist/
 # ML datasets (regenerate with ml/text/prepare_data.py)
 ml/data/
 ml/models/
+
+# Released model files for the server (download from Drive; see README)
+server/models/

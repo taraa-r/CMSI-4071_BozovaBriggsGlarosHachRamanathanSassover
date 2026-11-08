@@ -34,10 +34,14 @@ export interface ItemResult {
     label?: "ai" | "human" | null;
     threshold?: number | null;
     model_version?: string | null;
+    reason?: "length" | "language" | "not_available" | null;
+    analyzed_chars?: number | null;
+    total_chars?: number | null;
   };
   c2pa: { status: string };
   synthid: { status: string };
   limitations: string[];
+  explanation: string;
 }
 
 export interface AnalyzeResponse {

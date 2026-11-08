@@ -39,6 +39,12 @@ class ClassifierFinding(BaseModel):
     label: Literal["ai", "human"] | None = None
     threshold: float | None = None
     model_version: str | None = None
+    # Why there is no estimate when status is "unsupported" (SRS 5.3.1.53).
+    reason: Literal["length", "language", "not_available"] | None = None
+    # Characters the model actually read (first 512 tokens) and the text's full length, so the
+    # extension can say when an estimate covers only part of a long text.
+    analyzed_chars: int | None = None
+    total_chars: int | None = None
 
 
 class C2PAFinding(BaseModel):
@@ -67,6 +73,7 @@ class ItemResult(BaseModel):
     c2pa: C2PAFinding
     synthid: SynthIDFinding
     limitations: list[str]
+    explanation: str  # plain-language reason for the overall state (SRS 5.3.3.56)
 
 
 class AnalyzeResponse(BaseModel):

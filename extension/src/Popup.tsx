@@ -10,7 +10,7 @@ type Status =
 
 const STATE_LABELS: Record<ItemResult["overall_state"], string> = {
   warning: "Possible AI content",
-  inconclusive: "Inconclusive",
+  inconclusive: "No AI signs found",
   unable_to_analyze: "Unable to assess",
 };
 
@@ -382,6 +382,14 @@ const styles = `
     overflow: hidden;
   }
 
+  .caveat {
+    margin: 6px 0 0;
+    text-align: right;
+    font-size: 10px;
+    font-style: italic;
+    color: #5d6f84;
+  }
+
   .meta {
     margin-top: 8px;
     display: flex;
@@ -570,7 +578,7 @@ export default function Popup() {
                 </div>
                 <div className="summary-stat">
                   <strong>{summary?.inconclusive ?? 0}</strong>
-                  <span>Neutral</span>
+                  <span>No AI signs</span>
                 </div>
               </div>
             </section>
@@ -590,7 +598,7 @@ export default function Popup() {
                         {STATE_LABELS[result.overall_state]}
                       </span>
                       {estimate != null && (
-                        <span className="confidence">{estimate}% likelihood</span>
+                        <span className="confidence">Model estimate: {estimate}%</span>
                       )}
                     </div>
 
@@ -602,19 +610,25 @@ export default function Popup() {
                       </div>
                     )}
 
+                    {result.explanation && <p className="microcopy">{result.explanation}</p>}
+
                     <div className="meta">
                       <span className={`tag ${result.overall_state === "warning" ? "warning" : "neutral"}`}>
                         {signalSummary}
                       </span>
                     </div>
+
+                    {result.overall_state !== "unable_to_analyze" && (
+                      <p className="caveat">Estimate only. May be inaccurate.</p>
+                    )}
                   </li>
                 );
               })}
             </ul>
 
             <div className="disclaimer">
-              AI detection is probabilistic. This score suggests a possibility, not a definitive
-              conclusion of AI-generated content.
+              AI detection can be wrong. Missing credentials or watermarks do not prove that a
+              person created this content.
             </div>
           </div>
         )}

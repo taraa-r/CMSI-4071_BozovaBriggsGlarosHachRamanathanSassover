@@ -46,7 +46,7 @@ A full-page scan with more items sends several requests with the same `scan_id`.
 ```json
 {
   "scan_id": "b3f1c2e0-6a4d-4f7e-9c1a-2d8e5f0a7b11",
-  "rule_version": "rule-0.1",
+  "rule_version": "rule-1.0",
   "results": [
     {
       "item_id": "4c7d2a91-0e3b-4f6a-8b5d-91e2c7f0a3d4",
@@ -59,12 +59,16 @@ A full-page scan with more items sends several requests with the same `scan_id`.
         "estimate": 0.87,
         "estimate_kind": "model_estimate",
         "label": "ai",
-        "threshold": 0.70,
-        "model_version": "text-0.1"
+        "threshold": 0.8118,
+        "model_version": "distilroberta-base-20261030-0247",
+        "reason": null,
+        "analyzed_chars": 2040,
+        "total_chars": 4800
       },
       "c2pa": { "status": "not_applicable" },
       "synthid": { "status": "unavailable" },
-      "limitations": ["Not all AI-generated content carries credentials or watermarks."]
+      "limitations": ["Not all AI-generated content contains detectable credentials or watermarks."],
+      "explanation": "The model estimate (87%) is at or above the AI cutoff (81%). This estimate is based on the first 2,040 of 4,800 characters."
     },
     {
       "item_id": "9a1e5f37-2b8c-4d0e-a6f1-3c5b7d9e2f80",
@@ -95,7 +99,15 @@ A full-page scan with more items sends several requests with the same `scan_id`.
 - `inconclusive` — at least one check completed, no trigger
 - `unable_to_analyze` — no check completed
 
-**`classifier.status`**: `completed` · `unsupported` (text too short/long or not English, 5.3.3.70–71 — no `estimate` returned) · `error`
+**`classifier.status`**: `completed` · `unsupported` (text too short/long or not English, 5.3.3.70–71 — no `estimate` returned) · `error` (model not loaded or inference failed)
+
+**`classifier.reason`** (only when `unsupported`): `length` (outside 200–5000 characters after whitespace is collapsed) · `language` (not English) · `not_available` (image model not released yet)
+
+**`classifier.estimate`** is the **calibrated** model estimate (Platt scaling), 0–1. **`threshold`** is the released cutoff on that same scale (0.8118 for `distilroberta-base-20261030-0247`); `estimate >= threshold` triggers a warning.
+
+**`classifier.analyzed_chars` / `total_chars`**: the model reads at most the first 512 tokens. `analyzed_chars` is where the last token read ends in the text; when it is less than `total_chars`, the estimate covers only that first part, and `explanation` says so.
+
+**`explanation`**: a plain-language sentence or two explaining the overall state (5.3.3.56), safe to show to users as-is.
 
 **`c2pa.status`**: `verified_ai_assertion` · `verified_no_ai_assertion` · `missing_credential` · `invalid_credential` · `not_applicable` (text) · `unavailable` · `error`
 
@@ -123,7 +135,7 @@ Error body:
 
 ## `GET /health`
 
-Returns `{"status": "ok"}`. Already implemented.
+Returns `{"status": "ok", "model_loaded": true, "model_version": "distilroberta-base-20261030-0247", "rule_version": "rule-1.0"}`. `model_loaded` is `false` when the model folder is missing (see README); the server still answers, and text items come back `unable_to_analyze`.
 
 ## Not in this draft yet
 
