@@ -14,7 +14,7 @@ Owners: Noa, Tara. Decided: November 9, 2026.
 | **Primary** | [`openai/clip-vit-base-patch16`](https://huggingface.co/openai/clip-vit-base-patch16) | MIT ([openai/CLIP](https://github.com/openai/CLIP/blob/main/LICENSE)) | `57c216476eefef5ab752ec549e440a49ae4ae5f3` | Image encoder frozen; only a small classification layer is trained on its features | ViT design pretrained on ~400M image–caption pairs from the internet. CLIP-based detectors are reported to generalize better to generators not seen in training. Features are computed once, so training is cheap. |
 | Comparison | [`google/efficientnet-b0`](https://huggingface.co/google/efficientnet-b0) | Apache-2.0 | `3d8d75d0812b65064f0151b456f869c6344bf20c` | Fully fine-tuned | Small, fast CNN pretrained on ImageNet. Works differently from CLIP (sliding filters, fine pixel traces), which makes it a useful contrast. Expected to be weaker on unseen generators and on compressed web images — the comparison tests that. |
 
-Keep whichever does better on **validation** data, including the held-out generators (see below).
+Keep whichever does better on **validation** data. Unseen generators are measured only at the end, on `core/test` (see below).
 
 Considered and not chosen: [`google/vit-base-patch16-224-in21k`](https://huggingface.co/google/vit-base-patch16-224-in21k) (Apache-2.0) — the same ViT design as CLIP's image encoder but trained only on labeled ImageNet-21k categories; CLIP vs. EfficientNet is the more informative comparison.
 
