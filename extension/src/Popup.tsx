@@ -1,6 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { analyze, type ItemResult } from "./api";
-import { extractTextBlocks } from "./extract";
+import {
+  applyRealEyeHighlights,
+  clearRealEyeHighlights,
+  extractTextBlocks,
+  extractVisibleTextBlocks,
+} from "./extract";
+
+type ScanMode = "screen" | "selected";
 
 type Status =
   | { kind: "idle" }
@@ -140,7 +147,65 @@ const styles = `
     color: #53657f;
   }
 
-  .action-button {
+  .mode-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .mode-option {
+    width: 100%;
+    text-align: left;
+    border: 1px solid rgba(18, 38, 63, 0.08);
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 12px 12px 10px;
+    cursor: pointer;
+    color: #17304c;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  }
+
+  .mode-option.selected {
+    border-color: rgba(29, 94, 240, 0.35);
+    box-shadow: 0 8px 18px rgba(29, 94, 240, 0.1);
+    background: linear-gradient(180deg, rgba(29, 94, 240, 0.04), rgba(29, 94, 240, 0.01));
+  }
+
+  .mode-option:hover {
+    border-color: rgba(29, 94, 240, 0.22);
+    transform: translateY(-1px);
+  }
+
+  .mode-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+
+  .mode-description {
+    display: block;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #5d6f84;
+  }
+
+  .info-banner {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #edf4ff;
+    border: 1px solid rgba(29, 94, 240, 0.1);
+    color: #214e9f;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 600;
+  }
+
+  .action-button,
+  .secondary-button {
     width: 100%;
     border: none;
     border-radius: 12px;
@@ -148,11 +213,25 @@ const styles = `
     font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.01em;
-    background: linear-gradient(135deg, #0f2f6a 0%, #1d5ef0 100%);
-    color: white;
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  }
+
+  .action-button {
+    background: linear-gradient(135deg, #0f2f6a 0%, #1d5ef0 100%);
+    color: white;
     box-shadow: 0 10px 20px rgba(29, 94, 240, 0.25);
+  }
+
+  .secondary-button {
+    background: #edf3fb;
+    color: #193d63;
+    border: 1px solid rgba(18, 38, 63, 0.08);
+  }
+
+  .action-button:hover:not(:disabled),
+  .secondary-button:hover:not(:disabled) {
+    transform: translateY(-1px);
   }
 
   .action-button:hover:not(:disabled) {
@@ -433,6 +512,8 @@ const styles = `
 
 export default function Popup() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [scanMode, setScanMode] = useState<ScanMode>("screen");
+  const activeScanRef = useRef(0);
 
   const summary = useMemo(() => {
     if (status.kind !== "done") return null;
@@ -452,42 +533,118 @@ export default function Popup() {
     };
   }, [status]);
 
+  async function clearPageHighlights() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return;
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: clearRealEyeHighlights,
+      });
+    } catch {
+      // Ignore page highlight cleanup when the page context is unavailable.
+    }
+  }
+
+  function cancelScan() {
+    activeScanRef.current += 1;
+    void clearPageHighlights();
+    setStatus({ kind: "idle" });
+  }
+
+  function closeResults() {
+    activeScanRef.current += 1;
+    void clearPageHighlights();
+    if (typeof window !== "undefined" && typeof window.close === "function") {
+      window.close();
+      return;
+    }
+    setStatus({ kind: "idle" });
+  }
+
   async function startScan() {
+    const scanToken = ++activeScanRef.current;
     setStatus({ kind: "scanning" });
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id || !tab.url) throw new Error("No active tab found.");
 
-      let blocks: string[];
+      const extractionFunction = (scanMode === "screen"
+        ? extractVisibleTextBlocks
+        : extractTextBlocks) as (...args: unknown[]) => unknown;
+      let extractedBlocks: Array<{ id: string; text: string; selector: string }> | string[];
       try {
         const [injection] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: extractTextBlocks,
+          func: extractionFunction,
         });
-        blocks = injection.result ?? [];
+        extractedBlocks = (injection.result ?? []) as
+          | Array<{ id: string; text: string; selector: string }>
+          | string[];
       } catch {
         throw new Error("Chrome does not allow RealEye to scan this page.");
       }
 
+      if (scanToken !== activeScanRef.current) return;
+
+      const blocks = (Array.isArray(extractedBlocks)
+        ? extractedBlocks
+        : []
+      ).map((block) =>
+        typeof block === "string"
+          ? { id: crypto.randomUUID(), text: block, selector: "" }
+          : { id: block.id ?? crypto.randomUUID(), text: block.text ?? "", selector: block.selector ?? "" },
+      );
+
       if (blocks.length === 0) {
-        throw new Error("No text blocks of 200–5000 characters found on this page.");
+        const noVisibleTextMessage = scanMode === "screen"
+          ? "No eligible visible text was found in the current viewport. Scroll to the article content and try again."
+          : "No text blocks of 200–5000 characters were found on this page.";
+        throw new Error(noVisibleTextMessage);
       }
 
-      const items = blocks.map((text) => ({
-        item_id: crypto.randomUUID(),
-        type: "text" as const,
-        text,
+      const scanId = crypto.randomUUID();
+      const textMap = new Map<string, string>();
+      const markerMap = new Map<string, string>();
+      const allResults: ItemResult[] = [];
+
+      for (let index = 0; index < blocks.length; index += 10) {
+        const batch = blocks.slice(index, index + 10);
+        const items = batch.map((block) => {
+          const itemId = crypto.randomUUID();
+          textMap.set(itemId, block.text);
+          markerMap.set(itemId, block.id);
+          return { item_id: itemId, type: "text" as const, text: block.text };
+        });
+
+        const response = await analyze({
+          scan_id: scanId,
+          page_url: tab.url,
+          scan_time: new Date().toISOString(),
+          items,
+        });
+
+        allResults.push(...response.results);
+      }
+
+      if (scanToken !== activeScanRef.current) return;
+
+      const highlightPayload = allResults.map((result) => ({
+        item_id: result.item_id,
+        domMarkerId: markerMap.get(result.item_id) ?? result.item_id,
+        overall_state: result.overall_state,
+        explanation: result.explanation,
       }));
-      const response = await analyze({
-        scan_id: crypto.randomUUID(),
-        page_url: tab.url,
-        scan_time: new Date().toISOString(),
-        items,
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: applyRealEyeHighlights,
+        args: [highlightPayload],
       });
 
-      const texts = new Map(items.map((item) => [item.item_id, item.text]));
-      setStatus({ kind: "done", results: response.results, texts });
+      setStatus({ kind: "done", results: allResults, texts: textMap });
     } catch (err) {
+      if (scanToken !== activeScanRef.current) return;
       const message =
         err instanceof TypeError ? "Service unavailable" : (err as Error).message;
       setStatus({ kind: "error", message });
@@ -516,12 +673,36 @@ export default function Popup() {
         {status.kind === "idle" && (
           <>
             <section className="hero-card">
-              <h2>Check page content with a second look.</h2>
-              <p>
-                RealEye looks for signals that text may have been generated or edited by AI.
-                Results are advisory, not definitive proof.
-              </p>
+              <h2>Choose a scan type</h2>
+              <p>RealEye checks page text and highlights possible AI-generated patterns.</p>
+
+              <div className="mode-list">
+                <button
+                  type="button"
+                  className={`mode-option ${scanMode === "screen" ? "selected" : ""}`}
+                  onClick={() => setScanMode("screen")}
+                  aria-pressed={scanMode === "screen"}
+                >
+                  <span className="mode-title">Screen Scan</span>
+                  <span className="mode-description">Scan the full page for likely AI-generated text.</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`mode-option ${scanMode === "selected" ? "selected" : ""}`}
+                  onClick={() => setScanMode("selected")}
+                  aria-pressed={scanMode === "selected"}
+                >
+                  <span className="mode-title">Selected Content</span>
+                  <span className="mode-description">Check highlighted or chosen text on the page.</span>
+                </button>
+              </div>
+
+              <div className="info-banner">
+                First scan: RealEye sends page text to the local analysis service to check for AI-generated patterns.
+              </div>
             </section>
+
             <button className="action-button" onClick={startScan}>
               Start scan
             </button>
@@ -537,6 +718,11 @@ export default function Popup() {
             <p className="microcopy">
               We are extracting readable text and checking the model signals behind each item.
             </p>
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="secondary-button" onClick={cancelScan}>
+                Cancel
+              </button>
+            </div>
           </section>
         )}
 
@@ -610,8 +796,6 @@ export default function Popup() {
                       </div>
                     )}
 
-                    {result.explanation && <p className="microcopy">{result.explanation}</p>}
-
                     <div className="meta">
                       <span className={`tag ${result.overall_state === "warning" ? "warning" : "neutral"}`}>
                         {signalSummary}
@@ -629,6 +813,12 @@ export default function Popup() {
             <div className="disclaimer">
               AI detection can be wrong. Missing credentials or watermarks do not prove that a
               person created this content.
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="secondary-button" onClick={closeResults}>
+                Close
+              </button>
             </div>
           </div>
         )}
