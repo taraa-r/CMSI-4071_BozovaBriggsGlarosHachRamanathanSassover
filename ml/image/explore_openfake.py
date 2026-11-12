@@ -21,7 +21,6 @@ Saves one row per sampled image to ml/data/image/explore_<split>.csv.
 """
 
 import argparse
-import io
 import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -31,22 +30,9 @@ import pyarrow.parquet as pq
 from huggingface_hub import HfFileSystem
 from PIL import Image
 
-REPO = "datasets/ComplexDataLab/OpenFake"
-REVISION = "00b2f0ae3f5f7684c4b00f794f4c500076a9355d"  # pinned in DATASETS.md
+from openfake import LABELS, describe_image, read_labels, split_files
+
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "image"
-LABELS = {"real": 0, "fake": 1}
-
-# SRS 5.5.3 image limits
-FORMATS = {"JPEG", "PNG", "WEBP"}
-MIN_SIDE, MAX_SIDE = 32, 4096
-MAX_PIXELS = 16_000_000
-MAX_BYTES = 10 * 1024 * 1024
-
-# Standard JPEG luminance table at quality 50, used to estimate an image's JPEG quality.
-STANDARD_LUMA = [16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55,
-                 14, 13, 16, 24, 40, 57, 69, 56, 14, 17, 22, 29, 51, 87, 80, 62,
-                 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
-                 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99]
 
 Image.MAX_IMAGE_PIXELS = None  # we measure oversized images instead of refusing them
 
@@ -59,50 +45,6 @@ def parse_args():
     parser.add_argument("--chunks-per-file", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
-
-
-def split_files(fs: HfFileSystem, split: str) -> list[str]:
-    return sorted(fs.glob(f"{REPO}@{REVISION}/core/{split}-*.parquet"))
-
-
-def read_labels(fs: HfFileSystem, path: str) -> pd.DataFrame:
-    with fs.open(path) as f:
-        return pq.ParquetFile(f).read(columns=["label", "model", "type", "image_sha256"]).to_pandas()
-
-
-def jpeg_quality(image: Image.Image) -> float | None:
-    """Rough JPEG quality (1-100) from the image's luminance quantization table."""
-    tables = getattr(image, "quantization", None)
-    if not tables or 0 not in tables:
-        return None
-    scale = sum(tables[0]) * 100 / sum(STANDARD_LUMA)  # order-independent
-    quality = (200 - scale) / 2 if scale <= 100 else 5000 / scale
-    return round(max(1.0, min(100.0, quality)))
-
-
-def describe_image(data: bytes) -> dict:
-    try:
-        with Image.open(io.BytesIO(data)) as image:
-            width, height = image.size
-            info = {
-                "format": image.format,
-                "mode": image.mode,
-                "width": width,
-                "height": height,
-                "jpeg_quality": jpeg_quality(image) if image.format == "JPEG" else None,
-                "has_exif": len(image.getexif()) > 0,
-                "animated": getattr(image, "is_animated", False),
-            }
-    except Exception as error:
-        return {"format": f"unreadable: {type(error).__name__}"}
-    info["bytes"] = len(data)
-    info["megapixels"] = width * height / 1e6
-    info["within_srs_limits"] = (
-        info["format"] in FORMATS and not info["animated"]
-        and MIN_SIDE <= width <= MAX_SIDE and MIN_SIDE <= height <= MAX_SIDE
-        and width * height <= MAX_PIXELS and len(data) <= MAX_BYTES
-    )
-    return info
 
 
 def sample_images(fs: HfFileSystem, path: str, chunks: int, rng: random.Random) -> list[dict]:

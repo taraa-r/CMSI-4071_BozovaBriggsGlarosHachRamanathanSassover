@@ -48,16 +48,60 @@ Do **not** add OpenFake's `supplement_*` subsets to training without filtering: 
 | Has camera data (EXIF) | 8% | 15% |
 | Within SRS image limits | 69% (only 14% of Pexels) | 99% |
 
-So data prep must treat every image, real and AI, the same way:
+So data prep must treat every image, real and AI, the same way.
 
-- **Resize** to a similar size range, and shrink oversized images (e.g. Pexels) to within the SRS limits instead of dropping them: width and height 32–4096 pixels, at most 16,000,000 pixels.
-- **Re-encode as JPEG at a random quality** (e.g. 70–95), which also removes PNG, file-size and EXIF differences. The extension sends JPEG, PNG and static WebP up to 10 MiB.
-- Remove exact duplicates (57 in validation; OpenFake provides `image_sha256`). OpenFake states there are no overlaps between splits.
-- Normalize the `type` column spellings (`base`/`Base`, `finetune`/`Fine-tune`, `lora`/`LoRA`).
-- Look at `tiny-random-sana` images before training: the name suggests a tiny randomly initialized test model, so they may be noise rather than realistic AI images.
+## Data prep (Nov 10)
+
+`prepare_data.py` builds the train and validation sets; `check_shortcuts.py` confirms the shortcuts are gone. Both read OpenFake straight from Hugging Face at the pinned revision; the test split is never read.
+
+Every image goes through `preprocess.normalize_image`, the same function the server will use:
+
+1. Apply the EXIF rotation, convert to RGB, drop all metadata.
+2. **Square crop** (random 80–100% of the shorter side for train; centered and full for validation, test and the server). This removes the "1024×1024 square = AI" shortcut.
+3. **Resize** to a random 224–320 px for train, fixed 288 px otherwise. Images under 400 px on their shorter side are skipped in both groups, so nothing is upscaled; oversized Pexels photos shrink instead of being dropped.
+4. **Re-encode as JPEG**, quality random 70–95 for train and fixed 90 otherwise. This removes the PNG, JPEG quality, file size and EXIF differences.
+
+Selection:
+- Skips duplicate `image_sha256`, and validation images that also appear in train.
+- Excludes `tiny-random-sana`. OpenFake's own captions describe its images as "a uniform field of digital noise".
+- Normalizes `type` spellings (`Base` → `base`, `Fine-tune` → `finetune`, `LoRA` → `lora`).
+- Balances to the same number of real and AI images. Within each group, every generator (or real source, LAION / Pexels) gets an equal share, up to what is available.
+
+**Shortcut check after prep** (small test run: 200 + 200 train, 100 + 100 validation). The AUC column says how well that one property alone tells real from AI: 0.5 = coin flip, 1.0 = perfect shortcut.
+
+| | Before (Nov 9) | After: real | After: AI | AUC train | AUC validation |
+|---|---|---|---|---|---|
+| File format | real 98% JPEG, AI 48% PNG | 100% JPEG | 100% JPEG | – | – |
+| JPEG quality (median) | 83 vs 95 | 82 / 90 | 82 / 90 | 0.49 | 0.50 |
+| Image size | 0.6 vs 1.0 MP | 274 / 288 px | 272 / 288 px | 0.48 | 0.50 |
+| EXIF | 8% vs 15% | 0% | 0% | – | – |
+| File size (median) | 105 vs 612 KB | 16.1 / 22.9 KB | 17.6 / 26.0 KB | 0.55 | **0.58** |
+
+The remaining file-size gap is small and varies mostly by generator (e.g. 11 KB for `flux.1-dev`, 23 KB for `sd-2.1`). After identical processing, file size only measures how much fine detail a picture has. The model never sees file size, but a detail difference is in the pixels. **Recheck on the full run;** if the AUC stays above 0.55, compare the CLIP model's validation results on low- and high-detail images.
+
+## Style cap (decided Nov 11)
+
+OpenFake's AI images include many illustrations, anime and paintings, while its real images are almost all photos. A model could learn "illustration = AI". OpenFake has no style column (`prompt_kind` only says where the prompt text came from), so `label_styles.py` asks CLIP (the same pinned revision) which description each prepared image matches best: a photo, an illustration, a 3D render, or a graphic with text.
+
+**Decision:** AI images that CLIP is fairly sure are illustrations (best match, score ≥ 0.5) are capped at the same share as on the real side; real images are trimmed so real = AI. The model therefore mostly compares photos with photo-style AI images, which fits RealEye's main use (fake photos). Only the illustration label is acted on: in a spot check it was mostly right, while "3D render" also caught real studio photos.
+
+Small test run (CLIP style, share within each group):
+
+| | Real | AI before | AI after cap |
+|---|---|---|---|
+| Illustration, train | 2% | 8% | 2% |
+| Illustration, validation | 0% | 14% | 4% |
+| Photo, train | 72% | 59% | 63% |
+
+The cap dropped 24 of 400 train and 20 of 200 validation images. Remaining "illustration" rows after the cap are ones CLIP was unsure about. `styles.parquet` keeps every image's style so errors can be checked by style after training; both CLIP and EfficientNet train and validate only on rows with `keep == True`. On the test split, report results both overall and by style.
+
+## Full run
+
+See [COLAB.md](COLAB.md): Part A prepares the data and rechecks the shortcuts (CPU runtime); Part B labels styles, extracts CLIP features with blur/JPEG augmentation, and trains the classifier (GPU).
 
 ## Known limitations
 
 - CC-BY-NC-4.0 allows non-commercial use only; a commercial RealEye would need different training data.
 - OpenAI's model card says CLIP was built for research and not for general deployment without careful study of the specific use.
+- Drawings, anime and digital art are not reliably judged: AI illustrations are capped in training and real illustrations are rare in OpenFake (see Style cap). The model is meant for photos and photo-style images.
 - New generators appear constantly; results describe OpenFake's test data, not every image on the web (SRS 5.5.3).
