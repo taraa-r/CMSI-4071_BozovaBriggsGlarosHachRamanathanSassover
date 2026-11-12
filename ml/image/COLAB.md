@@ -36,7 +36,17 @@ Allow the pop-up. Then:
 !pip install -q -r requirements.txt
 ```
 
-If Colab shows a **"Restart session"** button, click it, then run `%cd /content/realeye/ml`.
+Pip prints warnings about dependency conflicts (diffusers, gradio, gcsfs, torchvision). They are harmless except torchvision, which would break the CLIP scripts in Part B. Remove it:
+
+```
+!pip uninstall -y torchvision
+```
+
+Then click **Runtime → Restart session**, and run:
+
+```
+%cd /content/realeye/ml
+```
 
 ### A3. Prepare the data
 
@@ -133,7 +143,7 @@ The model folder on Drive holds `head.pt` (the trained layer, a few KB), `config
 | Problem | Fix |
 |---|---|
 | Session disconnected during A3 | Redo A2, then run A3 again: it resumes. Keep the tab open and in front. |
-| Many `Retrying in ...` lines or `429` errors | Hugging Face is limiting downloads. It retries on its own; if it keeps failing, add `--workers 4` to A3. |
+| Many `Read timed out` / `Retrying in ...` lines or `429` errors | Normal now and then, as long as progress lines keep appearing. If none appear for 5+ minutes, stop the cell and rerun A3 as `!HF_HUB_DOWNLOAD_TIMEOUT=60 python image/prepare_data.py --out-dir /content/drive/MyDrive/RealEye/data/image --workers 4` (it resumes). |
 | `Skipped a row group that failed to download` | Fine now and then; the run reads more chunks to make up for it. |
 | `styles.parquet not found` | Run B2 before B3. |
 | `CUDA out of memory` in B2 or B3 | Add `--batch-size 32` (B3); for B2, edit `BATCH = 64` to 32 in `label_styles.py`. |
