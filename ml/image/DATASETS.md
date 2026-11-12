@@ -86,7 +86,7 @@ The remaining file-size gap is small and varies mostly by generator (e.g. 11 KB 
 
 ## Style cap (decided Nov 11)
 
-> **Replaced on Nov 12 by style matching.** The first full model still learned "not a normal photo = AI", because graphics and 3D renders stayed about twice as common among AI images. `label_styles.py` now keeps the same number of real and AI images in every style group. See [ERROR_ANALYSIS.md](ERROR_ANALYSIS.md). The section below describes the original cap.
+> **Replaced on Nov 12 by style matching.** The first full model still learned "not a normal photo = AI", because graphics and 3D renders stayed about twice as common among AI images. `label_styles.py` now keeps the same number of real and AI images in every style group in train. Validation keeps every image, like the test set. See [ERROR_ANALYSIS.md](ERROR_ANALYSIS.md). The section below describes the original cap.
 
 OpenFake's AI images include many illustrations, anime and paintings, while its real images are almost all photos. A model could learn "illustration = AI". OpenFake has no style column (`prompt_kind` only says where the prompt text came from), so `label_styles.py` asks CLIP (the same pinned revision) which description each prepared image matches best: a photo, an illustration, a 3D render, or a graphic with text.
 

@@ -105,7 +105,7 @@ You should see a table naming a **Tesla T4**. Switching runtimes resets the mach
 !python image/label_styles.py --data-dir /content/drive/MyDrive/RealEye/data/image
 ```
 
-Look at the "before" and "after" style tables for each split. After matching, every style group has the same count for real and AI. The `Kept N real + N AI` lines show how many images remain. (Until Nov 12 this step only capped AI illustrations; see `ERROR_ANALYSIS.md` for why it now matches every style.)
+For train, look at the "before" and "after" style tables: after matching, every style group has the same count for real and AI. Validation is not matched and keeps every image (it says `Not matched: all images kept`). The `Kept N real + N AI` lines show how many images remain. (Until Nov 12 this step only capped AI illustrations; see `ERROR_ANALYSIS.md` for why it now matches every style in train.)
 
 ### B3. Turn the images into CLIP features
 
@@ -182,7 +182,7 @@ On a fresh runtime, also do the pip install and torchvision removal from A2.
 !python image/label_styles.py --data-dir /content/drive/MyDrive/RealEye/data/image
 ```
 
-It says `Reusing the CLIP style scores` and takes seconds. Write down the `Kept N real + N AI (dropped ...)` line for each split.
+It says `Reusing the CLIP style scores` and takes seconds. Write down the `Kept N real + N AI (dropped ...)` line for train. Validation should say `dropped 0`.
 
 ### C3. Rebuild the CLIP features for the kept images
 

@@ -132,7 +132,36 @@ The illustration cap fixed illustrations only. **Renders and graphics were still
 
 ## 5. The fix: style matching (Nov 12)
 
-**Decision:** match every style between real and AI, not just illustrations. In each style group, real and AI keep the **same number** of images (the larger side is trimmed at random), in both train and validation. A model trained this way can't use style as a shortcut, so it has to find signs of AI within each style.
+**Decision:** in **train**, match every style between real and AI, not just illustrations. In each style group, real and AI keep the **same number** of images (the larger side is trimmed at random). A model trained this way can't learn style as a shortcut, so it has to find signs of AI within each style.
+
+**Validation is not matched; it keeps all 5,000 images** (also no longer illustration-capped). Reasons:
+
+1. **Matching only matters where the model learns.** The false-positive rate is computed from real images only, and recall from AI images only, so neither needs styles balanced *across* the two groups.
+2. **It matches the test set.** The test set won't be matched. Calibration chooses the cutoff on validation, so validation should look like what the cutoff will face.
+3. **Matching made validation harder, not fairer.** On the full data it dropped 26% of validation (1,276 images), mostly the easiest cases on each side:
+
+   | Group | Real dropped | AI dropped |
+   | --- | --- | --- |
+   | photo (clear) | 469 | 0 |
+   | photo (unclear) | 169 | 0 |
+   | illustration | 0 | 321 |
+   | render | 0 | 256 |
+   | graphic | 0 | 61 |
+
+   That would have made both the false-positive rate and recall look worse than on typical images.
+4. **More data, steadier numbers.** Calibration splits validation in half; 1,250 real images per half instead of 931.
+
+The one downside: training picks its best round and weight decay by validation loss, and on unmatched validation a model that leans slightly on style could score a little better. Since the training data no longer has that shortcut, the effect should be small. To see style effects directly, results are reported **by style** (`analyze_errors.py`).
+
+Full validation set, style groups (from `label_styles.py`, Nov 12):
+
+| Group | Real | AI |
+| --- | --- | --- |
+| photo (clear) | 1,044 (42%) | 575 (23%) |
+| photo (unclear) | 851 (34%) | 682 (27%) |
+| graphic | 369 (15%) | 430 (17%) |
+| render | 203 (8%) | 459 (18%) |
+| illustration | 33 (1%) | 354 (14%) |
 
 **Style groups** (from CLIP's style scores, already saved in `styles.parquet`):
 
@@ -147,10 +176,10 @@ The illustration cap fixed illustrations only. **Renders and graphics were still
 - **Why split photos in two:** false alarms had lower photo scores (0.63 vs. 0.81 for LAION). Real images skew toward clear photos and AI images toward unclear ones. Matching within each half stops the model from using "how photo-like" as a shortcut inside the photo style too.
 - **Why imperfect style labels are fine:** CLIP sometimes labels a real studio photo as a "render". For matching that doesn't matter. The classifier only sees CLIP features, so balancing what CLIP perceives is exactly what removes the shortcut.
 
-**Cost:** fewer images. On the small test run, matching dropped 12% of train and 27% of validation. On the full data, an estimated 20–25% of images will be dropped (about 15,000 per class left in train). The `label_styles.py` printout gives the real numbers. With a frozen encoder and one linear layer, 15,000 per class is still plenty.
+**Cost:** fewer train images. On the small test run, matching dropped 12% of train. On the full data, an estimated 20–25% will be dropped (about 15,000 per class left). The `label_styles.py` printout gives the real numbers. With a frozen encoder and one linear layer, 15,000 per class is still plenty.
 
 **Code changes:**
-- `label_styles.py` now matches all style groups instead of capping illustrations. It reuses the saved CLIP style scores, so it runs in seconds without a GPU (`--rescore` runs CLIP again).
+- `label_styles.py` now matches all style groups in train instead of capping illustrations, and keeps every validation image. It reuses the saved CLIP style scores, so it runs in seconds without a GPU (`--rescore` runs CLIP again).
 - `extract_features.py` is unchanged but must be rerun, since it builds features only for kept images.
 - `train_clip.py`:
   - It stops if the features don't match the kept images (prevents training on stale features).

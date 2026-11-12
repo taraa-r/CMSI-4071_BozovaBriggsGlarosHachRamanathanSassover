@@ -4,9 +4,14 @@ Why: in OpenFake, AI images include many more illustrations, graphics and 3D ren
 real images do (full validation set: 44% of AI vs 24% of real are not photos). The first
 model, trained with only illustrations capped (Nov 11), learned "doesn't look like a normal
 photo = AI": it flagged real posters, CGI and glossy studio photos, and missed photorealistic
-AI (ERROR_ANALYSIS.md). So now every style is matched: in each style group, real and AI keep
-the same number of images. The model can no longer use style as a shortcut and has to find
-signs of AI within each style.
+AI (ERROR_ANALYSIS.md). So now every style is matched in train: in each style group, real and
+AI keep the same number of images. The model can no longer learn style as a shortcut and has
+to find signs of AI within each style.
+
+Validation is NOT matched: it keeps every image. Matching only matters where the model learns
+(train). The false-positive rate (real images only) and recall (AI images only) don't need
+styles balanced across the two groups, and the test set won't be matched either, so the cutoff
+chosen on validation should face the same kind of images. Results are reported by style instead.
 
 Style groups (CLIP's best-matching description; photos split by how sure CLIP is):
     photo (clear)   style "photo" and p_photo >= 0.8
@@ -52,6 +57,7 @@ STYLES = {
 }
 MIN_ILLUSTRATION_SCORE = 0.5  # is_illustration column (the Nov 11 cap); kept for reference
 CLEAR_PHOTO_SCORE = 0.8  # photos below this go in the "photo (unclear)" group
+MATCHED_SPLITS = ("train",)  # validation keeps every image (see the docstring)
 
 
 def parse_args():
@@ -146,12 +152,16 @@ def main():
         df["style"] = df[[f"p_{name}" for name in STYLES]].idxmax(axis=1).str.removeprefix("p_")
         df["is_illustration"] = (df["style"] == "illustration") & (df["p_illustration"] >= MIN_ILLUSTRATION_SCORE)
         df["style_group"] = style_group(df)
-        df["keep"] = match_styles(df, random.Random(f"{SEED}-{split}"))
         df["split"] = split
+        print("Style groups (count and share within real / AI):\n" + style_table(df))
+        if split in MATCHED_SPLITS:
+            df["keep"] = match_styles(df, random.Random(f"{SEED}-{split}"))
+            print("After matching:\n" + style_table(df[df["keep"]]))
+        else:
+            df["keep"] = True
+            print("Not matched: all images kept, so validation looks like the test set (results are reported by style).")
 
         kept = df[df["keep"]]
-        print("Style groups before matching (count and share within real / AI):\n" + style_table(df))
-        print("After matching:\n" + style_table(kept))
         print(f"Kept {(kept.label == 0).sum():,} real + {(kept.label == 1).sum():,} AI "
               f"(dropped {(~df['keep']).sum():,} of {len(df):,}, {(~df['keep']).mean():.0%})")
         manifest_note[split] = {
