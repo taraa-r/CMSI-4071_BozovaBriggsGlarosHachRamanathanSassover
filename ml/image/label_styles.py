@@ -1,17 +1,29 @@
-"""Label each prepared image's style with CLIP and cap AI illustrations (decided Nov 11).
+"""Label each prepared image's style with CLIP, then match styles between real and AI (Nov 12).
 
-Why: in OpenFake, AI images include many illustrations, anime and paintings, while real
-images are almost all photos (CLIP sample, Nov 11: illustrations 10% of AI vs 2% of real).
-A model trained on that could learn "illustration = AI". So AI images that CLIP is confident
-are illustrations are capped at the same share as on the real side; the model then mostly
-compares photos with photo-style AI images. Real images are trimmed to keep real = AI.
+Why: in OpenFake, AI images include many more illustrations, graphics and 3D renders than
+real images do (full validation set: 44% of AI vs 24% of real are not photos). The first
+model, trained with only illustrations capped (Nov 11), learned "doesn't look like a normal
+photo = AI": it flagged real posters, CGI and glossy studio photos, and missed photorealistic
+AI (ERROR_ANALYSIS.md). So now every style is matched: in each style group, real and AI keep
+the same number of images. The model can no longer use style as a shortcut and has to find
+signs of AI within each style.
 
-Run after prepare_data.py, from the ml folder (a GPU makes it quick; CPU works for small runs):
-    .venv/bin/python image/label_styles.py [--data-dir PATH]
+Style groups (CLIP's best-matching description; photos split by how sure CLIP is):
+    photo (clear)   style "photo" and p_photo >= 0.8
+    photo (unclear) style "photo" and p_photo < 0.8: polished, staged or edited-looking photos
+    illustration, render, graphic
+The groups don't need to be exactly right: the classifier only sees CLIP features, so
+balancing what CLIP perceives is what removes the shortcut.
+
+Run after prepare_data.py, from the ml folder:
+    python image/label_styles.py [--data-dir PATH] [--rescore]
+The first run scores every image with CLIP (a GPU makes it quick). Later runs reuse the scores
+in styles.parquet and only redo the matching (seconds, CPU is fine); --rescore forces CLIP again.
+After this, rerun extract_features.py: it builds features only for the kept images.
 
 Writes styles.parquet next to the data: one row per image (row_id, split, label, model,
-style scores, style, keep). Training and evaluation use only rows with keep == True, and
-the style column lets errors be checked by style after training.
+style scores, style, style_group, keep). Training and evaluation use only rows with
+keep == True; the style columns let errors be checked by style after training.
 """
 
 import argparse
@@ -31,21 +43,21 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "image"
 SEED = 42
 BATCH = 64
 
-# CLIP compares each image with these descriptions. Only "illustration" is acted on: in the
-# Nov 11 spot check, CLIP's illustration label was mostly right, while "render" also caught
-# real studio photos.
+# CLIP compares each image with these descriptions; the best match is the image's style.
 STYLES = {
     "photo": "a photo",
     "illustration": "a drawing, painting, cartoon, anime or digital illustration",
     "render": "a 3D render or video game graphics",
     "graphic": "a poster, advertisement or graphic design with text",
 }
-MIN_ILLUSTRATION_SCORE = 0.5  # count as an illustration only when CLIP is fairly sure
+MIN_ILLUSTRATION_SCORE = 0.5  # is_illustration column (the Nov 11 cap); kept for reference
+CLEAR_PHOTO_SCORE = 0.8  # photos below this go in the "photo (unclear)" group
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    parser.add_argument("--rescore", action="store_true", help="run CLIP again even if styles.parquet has scores")
     return parser.parse_args()
 
 
@@ -66,70 +78,99 @@ def style_scores(images: list[bytes], model, processor, device) -> pd.DataFrame:
     return pd.DataFrame(torch.cat(scores).numpy(), columns=[f"p_{name}" for name in STYLES])
 
 
-def cap_illustrations(df: pd.DataFrame, rng: random.Random) -> pd.Series:
-    """keep flags: AI illustrations capped at the real illustration share, then real = AI."""
-    real, ai = df[df["label"] == 0], df[df["label"] == 1]
-    real_share = real["is_illustration"].mean()
-    ai_ill = ai[ai["is_illustration"]].index.tolist()
-    ai_other = len(ai) - len(ai_ill)
-    # Keep k AI illustrations so that k / (ai_other + k) is at most real_share.
-    allowed = int(real_share * ai_other / (1 - real_share)) if real_share < 1 else len(ai_ill)
-    drop = set(rng.sample(sorted(ai_ill), max(0, len(ai_ill) - allowed)))
-    n_ai = len(ai) - len(drop)
-    drop |= set(rng.sample(sorted(real.index), max(0, len(real) - n_ai)))
-    return ~df.index.isin(drop)
+def style_group(df: pd.DataFrame) -> pd.Series:
+    clear = (df["style"] == "photo") & (df["p_photo"] >= CLEAR_PHOTO_SCORE)
+    group = df["style"].where(df["style"] != "photo", "photo (unclear)")
+    return group.where(~clear, "photo (clear)")
+
+
+def match_styles(df: pd.DataFrame, rng: random.Random) -> pd.Series:
+    """keep flags: in every style group, keep the same number of real and AI images.
+
+    The larger side is trimmed at random, so the kept set stays balanced (real = AI) and no
+    style is more common on one side. Images are sorted by row_id first so reruns match."""
+    keep = set()
+    for _, rows in df.groupby("style_group"):
+        real = sorted(rows.index[rows["label"] == 0], key=lambda i: df.at[i, "row_id"])
+        ai = sorted(rows.index[rows["label"] == 1], key=lambda i: df.at[i, "row_id"])
+        n = min(len(real), len(ai))
+        keep |= set(rng.sample(real, n)) | set(rng.sample(ai, n))
+    return df.index.isin(keep)
 
 
 def style_table(df: pd.DataFrame) -> str:
-    table = pd.crosstab(df["style"], df["label"].map({0: "real", 1: "AI"}), normalize="columns")
-    return (table * 100).round(0).astype(int).astype(str).add("%").to_string()
+    counts = pd.crosstab(df["style_group"], df["label"].map({0: "real", 1: "AI"}))
+    shares = (counts / counts.sum() * 100).round(0).astype(int).astype(str).add("%")
+    return counts.astype(str).add(" (").add(shares).add(")").to_string()
+
+
+def scored_split(split: str, args, saved: pd.DataFrame | None, clip: list) -> pd.DataFrame | None:
+    """One split's images with style scores: reused from styles.parquet when possible."""
+    files = sorted(args.data_dir.glob(f"{split}-*.parquet"))
+    if not files:
+        print(f"No {split} files in {args.data_dir}; run prepare_data.py first.")
+        return None
+    df = pd.concat(pd.read_parquet(f, columns=["row_id", "label", "model", "type", "image_sha256"])
+                   for f in files).reset_index(drop=True)
+    print(f"\n=== {split}: {len(df):,} images ===")
+    score_cols = [f"p_{name}" for name in STYLES]
+    if saved is not None:
+        old = saved[saved["split"] == split].drop_duplicates("row_id").set_index("row_id")
+        if set(df["row_id"]) <= set(old.index):
+            print("  Reusing the CLIP style scores in styles.parquet (--rescore to run CLIP again).")
+            return df.join(old[score_cols], on="row_id")
+        print("  styles.parquet doesn't cover these images (the data was rebuilt); running CLIP.")
+    if not clip:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"  Loading CLIP on {device}...")
+        clip += [CLIPModel.from_pretrained(CLIP_MODEL, revision=CLIP_REVISION).to(device).eval(),
+                 CLIPProcessor.from_pretrained(CLIP_MODEL, revision=CLIP_REVISION), device]
+    images = pd.concat(pd.read_parquet(f, columns=["image"]) for f in files)["image"].tolist()
+    return pd.concat([df, style_scores(images, *clip)], axis=1)
 
 
 def main():
     args = parse_args()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Loading CLIP on {device}...")
-    model = CLIPModel.from_pretrained(CLIP_MODEL, revision=CLIP_REVISION).to(device).eval()
-    processor = CLIPProcessor.from_pretrained(CLIP_MODEL, revision=CLIP_REVISION)
+    styles_path = args.data_dir / "styles.parquet"
+    saved = None
+    if styles_path.exists() and not args.rescore:
+        saved = pd.read_parquet(styles_path)
+        if not {f"p_{name}" for name in STYLES} <= set(saved.columns):
+            saved = None
 
-    results, manifest_note = [], {}
+    results, manifest_note, clip = [], {}, []
     for split in ("train", "validation"):
-        files = sorted(args.data_dir.glob(f"{split}-*.parquet"))
-        if not files:
-            print(f"No {split} files in {args.data_dir}; run prepare_data.py first.")
+        df = scored_split(split, args, saved, clip)
+        if df is None:
             continue
-        df = pd.concat(pd.read_parquet(f) for f in files).reset_index(drop=True)
-        print(f"\n=== {split}: {len(df):,} images ===")
-        scores = style_scores(list(df["image"]), model, processor, device)
-        df = pd.concat([df.drop(columns="image"), scores], axis=1)
-        df["style"] = scores.idxmax(axis=1).str.removeprefix("p_")
+        df["style"] = df[[f"p_{name}" for name in STYLES]].idxmax(axis=1).str.removeprefix("p_")
         df["is_illustration"] = (df["style"] == "illustration") & (df["p_illustration"] >= MIN_ILLUSTRATION_SCORE)
-        df["keep"] = cap_illustrations(df, random.Random(f"{SEED}-{split}"))
+        df["style_group"] = style_group(df)
+        df["keep"] = match_styles(df, random.Random(f"{SEED}-{split}"))
         df["split"] = split
 
         kept = df[df["keep"]]
-        print("Style share before the cap:\n" + style_table(df))
-        print("After the cap:\n" + style_table(kept))
+        print("Style groups before matching (count and share within real / AI):\n" + style_table(df))
+        print("After matching:\n" + style_table(kept))
         print(f"Kept {(kept.label == 0).sum():,} real + {(kept.label == 1).sum():,} AI "
-              f"(dropped {(~df['keep']).sum():,})")
+              f"(dropped {(~df['keep']).sum():,} of {len(df):,}, {(~df['keep']).mean():.0%})")
         manifest_note[split] = {
-            "illustration_share_real": round(float(df[df.label == 0]["is_illustration"].mean()), 4),
-            "illustration_share_ai_before": round(float(df[df.label == 1]["is_illustration"].mean()), 4),
-            "illustration_share_ai_after": round(float(kept[kept.label == 1]["is_illustration"].mean()), 4),
+            "groups_before": {f"{g} {'real' if l == 0 else 'ai'}": int(n)
+                              for (g, l), n in df.groupby(["style_group", "label"]).size().items()},
             "kept_real": int((kept.label == 0).sum()), "kept_ai": int((kept.label == 1).sum()),
         }
         results.append(df)
 
     if not results:
         return
-    out = pd.concat(results, ignore_index=True)
-    out.to_parquet(args.data_dir / "styles.parquet", index=False)
+    pd.concat(results, ignore_index=True).to_parquet(styles_path, index=False)
     manifest_path = args.data_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    manifest["style_cap"] = {"clip_model": CLIP_MODEL, "clip_revision": CLIP_REVISION, "styles": STYLES,
-                             "min_illustration_score": MIN_ILLUSTRATION_SCORE, **manifest_note}
+    manifest.pop("style_cap", None)  # the Nov 11 illustration-only cap, replaced by matching
+    manifest["style_matching"] = {"clip_model": CLIP_MODEL, "clip_revision": CLIP_REVISION, "styles": STYLES,
+                                  "clear_photo_score": CLEAR_PHOTO_SCORE, **manifest_note}
     manifest_path.write_text(json.dumps(manifest, indent=2))
-    print(f"\nSaved {args.data_dir / 'styles.parquet'}")
+    print(f"\nSaved {styles_path}. Next: extract_features.py (features for the kept images).")
 
 
 if __name__ == "__main__":

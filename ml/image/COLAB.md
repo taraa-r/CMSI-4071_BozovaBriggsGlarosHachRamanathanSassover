@@ -99,13 +99,13 @@ Share the printout with the team, and add the numbers to the shortcut table in `
 
 You should see a table naming a **Tesla T4**. Switching runtimes resets the machine, so redo **A2** (mount Drive, clone, install). The data from Part A is safe on Drive.
 
-### B2. Label styles and cap AI illustrations
+### B2. Label styles and match them between real and AI
 
 ```
 !python image/label_styles.py --data-dir /content/drive/MyDrive/RealEye/data/image
 ```
 
-Look at the "before" and "after" style tables for each split. After the cap, the **illustration** share for AI should be close to the real share. The `Kept N real + N AI` lines show how many images remain (the small test run lost about 6% of train).
+Look at the "before" and "after" style tables for each split. After matching, every style group has the same count for real and AI. The `Kept N real + N AI` lines show how many images remain. (Until Nov 12 this step only capped AI illustrations; see `ERROR_ANALYSIS.md` for why it now matches every style.)
 
 ### B3. Turn the images into CLIP features
 
@@ -160,6 +160,53 @@ It also saves contact sheets to `<model folder>/errors/`. Each image is labeled 
 
 `errors.csv` lists every mistake. Share the printout and the sheets with the team before changing the data or the model.
 
+## Part C: retrain with style matching (Nov 12)
+
+The first model (`clip-linear-20261112-0823`) was trained with only AI illustrations capped. `ERROR_ANALYSIS.md` explains why every style is now matched. To redo it on the existing data (Part A doesn't need to run again):
+
+### C1. Get the new code (T4 GPU runtime)
+
+Switch to a **T4 GPU** (Runtime → Change runtime type), because C3 runs CLIP over every kept image. Then mount Drive and get the code as in A2. If the `realeye` folder is still there, update it instead:
+
+```
+%cd /content/realeye
+!git pull
+%cd /content/realeye/ml
+```
+
+On a fresh runtime, also do the pip install and torchvision removal from A2.
+
+### C2. Match styles
+
+```
+!python image/label_styles.py --data-dir /content/drive/MyDrive/RealEye/data/image
+```
+
+It says `Reusing the CLIP style scores` and takes seconds. Write down the `Kept N real + N AI (dropped ...)` line for each split.
+
+### C3. Rebuild the CLIP features for the kept images
+
+```
+!python image/extract_features.py --data-dir /content/drive/MyDrive/RealEye/data/image
+```
+
+This replaces the old features, and takes about as long as B3 did, a bit less since fewer images are kept.
+
+### C4. Train and compare with the first model
+
+```
+!python image/train_clip.py --data-dir /content/drive/MyDrive/RealEye/data/image --out-dir /content/drive/MyDrive/RealEye/models/image/clip-linear-$(date +%Y%m%d-%H%M) --compare-to /content/drive/MyDrive/RealEye/models/image/clip-linear-20261112-0823
+```
+
+Besides the usual output, it prints an `earlier` and a `new` line. Both models are scored on the **same** new validation images, at 0.5 and at the cutoff that flags 10% of real images. Compare:
+- recall and F1 at that cutoff;
+- LAION vs. Pexels false-positive rate;
+- recall by style, especially `photo`.
+
+### C5. Look at the mistakes again
+
+Run B5 with the new model folder that C4 printed. Share all the printouts and the LAION contact sheets, and add the results to `ERROR_ANALYSIS.md` ("Results after style matching").
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -168,6 +215,7 @@ It also saves contact sheets to `<model folder>/errors/`. Each image is labeled 
 | Many `Read timed out` / `Retrying in ...` lines or `429` errors | Normal now and then, as long as progress lines keep appearing. If none appear for 5+ minutes, stop the cell and rerun A3 as `!HF_HUB_DOWNLOAD_TIMEOUT=60 python image/prepare_data.py --out-dir /content/drive/MyDrive/RealEye/data/image --workers 4` (it resumes). |
 | `Skipped a row group that failed to download` | Fine now and then; the run reads more chunks to make up for it. |
 | `styles.parquet not found` | Run B2 before B3. |
+| `The train features don't match the images kept in styles.parquet` | `label_styles.py` was rerun after the features were built. Run `extract_features.py` (B3/C3) again, then train. |
 | `CUDA out of memory` in B2 or B3 | Add `--batch-size 32` (B3); for B2, edit `BATCH = 64` to 32 in `label_styles.py`. |
 | Scripts say `cpu` instead of `cuda` in Part B | Runtime → Change runtime type → T4 GPU, then redo A2. |
 | `operator torchvision::nms does not exist` | Run `!pip uninstall -y torchvision`, then **Runtime → Restart session**, then `%cd /content/realeye/ml`. |

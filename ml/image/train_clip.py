@@ -10,7 +10,10 @@ lowest validation loss. The AI cutoff is chosen later, in calibration; the 0.5 c
 is only for a first look.
 
 Run from the ml folder (seconds to minutes, CPU is fine):
-    .venv/bin/python image/train_clip.py [--data-dir PATH]
+    .venv/bin/python image/train_clip.py [--data-dir PATH] [--compare-to OLD_MODEL_DIR]
+
+--compare-to scores an earlier model (its head.pt) on the same validation images, so the two
+can be compared fairly even if the earlier one was validated on a different set of images.
 
 Saves to ml/models/image/clip-linear-<date-time>/ (or --out-dir):
     head.pt                the trained layer (weight, bias) and feature scaling (mean, std)
@@ -45,7 +48,58 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--compare-to", type=Path, default=None, help="earlier model folder to compare with")
+    parser.add_argument("--target-fpr", type=float, default=0.10, help="false-positive rate for the comparison cutoff")
     return parser.parse_args()
+
+
+def check_features_current(data_dir: Path, features_dir: Path) -> None:
+    """Stop if the features were built for a different set of kept images (label_styles.py rerun)."""
+    styles_path = data_dir / "styles.parquet"
+    if not styles_path.exists():
+        return
+    styles = pd.read_parquet(styles_path, columns=["split", "row_id", "keep"])
+    for split in ("train", "validation"):
+        kept = set(styles[(styles.split == split) & styles.keep].row_id)
+        have = set(pd.read_parquet(features_dir / f"{split}.parquet", columns=["row_id"]).row_id)
+        if kept != have:
+            raise SystemExit(f"The {split} features don't match the images kept in styles.parquet "
+                             f"({len(have):,} vs. {len(kept):,}). Rerun extract_features.py first.")
+
+
+def at_fpr(df: pd.DataFrame, target: float) -> dict:
+    """Cutoff that flags `target` of the real images, and how the model does there."""
+    real, ai = df[df.label == 0], df[df.label == 1]
+    cutoff = float(np.quantile(real.score, 1 - target))
+    tp, fp = int((ai.score >= cutoff).sum()), int((real.score >= cutoff).sum())
+    recall, precision = tp / len(ai), tp / max(tp + fp, 1)
+    return {
+        "cutoff": round(cutoff, 4), "recall": round(recall, 4),
+        "f1": round(2 * precision * recall / (precision + recall), 4) if precision + recall else 0.0,
+        "false_positive_rate_by_real_source": real.groupby("model").score.apply(
+            lambda s: round(float((s >= cutoff).mean()), 3)).to_dict(),
+        "recall_by_style": ai.groupby("style").score.apply(lambda s: round(float((s >= cutoff).mean()), 3)).to_dict(),
+    }
+
+
+def score_with(model_dir: Path, x_val_raw: torch.Tensor) -> np.ndarray:
+    """Scores from a saved head.pt (with its own feature scaling) on L2-normalized features."""
+    saved = torch.load(model_dir / "head.pt")
+    layer = torch.nn.Linear(x_val_raw.shape[-1], 1)
+    layer.load_state_dict({"weight": saved["weight"], "bias": saved["bias"]})
+    with torch.no_grad():
+        logits = layer((x_val_raw - saved["mean"]) / saved["std"]).squeeze(1).numpy()
+    return 1 / (1 + np.exp(-logits))
+
+
+def print_comparison(rows: dict, target: float) -> None:
+    print(f"\nSame validation images; first-look cutoff 0.5, then the cutoff that flags {target:.0%} of real images:")
+    for name, (overall, fixed) in rows.items():
+        sources = " | ".join(f"{s} FPR {v:.3f}" for s, v in fixed["false_positive_rate_by_real_source"].items())
+        print(f"  {name:<9} @0.5: F1 {overall['f1']:.3f}, FPR {overall['false_positive_rate']:.3f}, "
+              f"AUC {overall['auc']:.3f} || @{fixed['cutoff']:.3f}: recall {fixed['recall']:.3f}, "
+              f"F1 {fixed['f1']:.3f} | {sources}")
+        print(f"  {'':<9} recall by style @{fixed['cutoff']:.3f}: {fixed['recall_by_style']}")
 
 
 def load(features_dir: Path, split: str):
@@ -127,9 +181,11 @@ def breakdown(df: pd.DataFrame) -> dict:
 def main():
     args = parse_args()
     features_dir = args.data_dir / "features"
+    check_features_current(args.data_dir, features_dir)
     x_train, train_info = load(features_dir, "train")
     x_val, val_info = load(features_dir, "validation")
     x_val = x_val[:, 0]  # validation has only the clean version
+    x_val_raw = x_val.clone()
     y_train = torch.tensor(train_info.label.values, dtype=torch.float32)
     y_val = torch.tensor(val_info.label.values, dtype=torch.float32)
     scale = scaler(x_train)
@@ -160,6 +216,13 @@ def main():
     details = breakdown(scores)
     print("False-positive rate by real source:", details["false_positive_rate_by_real_source"])
     print("Score vs. file size (Spearman):", details["score_vs_file_size_spearman"])
+    details[f"at_fpr_{args.target_fpr}"] = at_fpr(scores, args.target_fpr)
+    if args.compare_to:
+        old = val_info.assign(score=score_with(args.compare_to, x_val_raw))
+        details["comparison"] = {"model": str(args.compare_to), "validation": rates(old),
+                                 f"at_fpr_{args.target_fpr}": at_fpr(old, args.target_fpr)}
+        print_comparison({"earlier": (rates(old), at_fpr(old, args.target_fpr)),
+                          "new": (overall, details[f"at_fpr_{args.target_fpr}"])}, args.target_fpr)
 
     settings = json.loads((features_dir / "settings.json").read_text())
     out_dir = args.out_dir or MODELS_DIR / f"clip-linear-{datetime.now():%Y%m%d-%H%M}"

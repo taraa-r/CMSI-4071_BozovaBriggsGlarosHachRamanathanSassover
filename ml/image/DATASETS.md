@@ -86,6 +86,8 @@ The remaining file-size gap is small and varies mostly by generator (e.g. 11 KB 
 
 ## Style cap (decided Nov 11)
 
+> **Replaced on Nov 12 by style matching.** The first full model still learned "not a normal photo = AI", because graphics and 3D renders stayed about twice as common among AI images. `label_styles.py` now keeps the same number of real and AI images in every style group. See [ERROR_ANALYSIS.md](ERROR_ANALYSIS.md). The section below describes the original cap.
+
 OpenFake's AI images include many illustrations, anime and paintings, while its real images are almost all photos. A model could learn "illustration = AI". OpenFake has no style column (`prompt_kind` only says where the prompt text came from), so `label_styles.py` asks CLIP (the same pinned revision) which description each prepared image matches best: a photo, an illustration, a 3D render, or a graphic with text.
 
 **Decision:** AI images that CLIP is fairly sure are illustrations (best match, score ≥ 0.5) are capped at the same share as on the real side; real images are trimmed so real = AI. The model therefore mostly compares photos with photo-style AI images, which fits RealEye's main use (fake photos). Only the illustration label is acted on: in a spot check it was mostly right, while "3D render" also caught real studio photos.
