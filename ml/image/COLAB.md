@@ -138,6 +138,28 @@ It also prints two checks:
 
 The model folder on Drive holds `head.pt` (the trained layer, a few KB), `config.json`, `metrics.json` (the full breakdowns by generator and style) and `validation_scores.csv` (for calibration). Share the `RealEye` Drive folder with your teammate.
 
+### B5. Look at the mistakes (CPU is fine)
+
+```
+!python image/analyze_errors.py --model-dir /content/drive/MyDrive/RealEye/models/image/<model folder> --data-dir /content/drive/MyDrive/RealEye/data/image
+```
+
+Replace `<model folder>` with the folder B4 printed (e.g. `clip-linear-20261112-0823`). This takes about a minute and doesn't rerun CLIP. The cutoff is placed where 10% of real images get flagged (change it with `--target-fpr 0.08`).
+
+It prints three things:
+
+1. **Real images wrongly flagged**, by source (LAION, Pexels) and by CLIP style. The `share of all` column shows where most false alarms come from.
+2. **AI images caught**, by style and by generator, worst first.
+3. **How sure the model is when it's wrong**, and whether false alarms are smaller files or look less like photos to CLIP.
+
+It also saves contact sheets to `<model folder>/errors/`. Each image is labeled with its score, style and file size. Open them in the Drive file browser:
+
+- `false_alarms_laion_top.png` and `false_alarms_laion_random.png`: the real LAION images the model calls AI. Compare them with `correct_laion_random.png`.
+- The same three sheets for Pexels.
+- `missed_ai_top.png`: the AI images the model is most sure are real.
+
+`errors.csv` lists every mistake. Share the printout and the sheets with the team before changing the data or the model.
+
 ## Troubleshooting
 
 | Problem | Fix |
