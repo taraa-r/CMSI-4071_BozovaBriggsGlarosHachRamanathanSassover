@@ -207,6 +207,43 @@ Besides the usual output, it prints an `earlier` and a `new` line. Both models a
 
 Run B5 with the new model folder that C4 printed. Share all the printouts and the LAION contact sheets, and add the results to `ERROR_ANALYSIS.md` ("Results after style matching").
 
+## Part D: try the two-layer (MLP) head (Nov 12)
+
+Style matching didn't reduce the LAION false alarms (`ERROR_ANALYSIS.md`). A single linear layer can only draw one straight boundary through CLIP's features. `--head mlp` trains two layers instead (512 → 256 → 1, with dropout), which can learn combinations of features. It reuses the features from C3, so nothing else needs to run again.
+
+### D1. Get the new code
+
+A CPU runtime is enough; a T4 is a little faster. If the `realeye` folder is still there:
+
+```
+%cd /content/realeye
+!git pull
+%cd /content/realeye/ml
+```
+
+On a fresh runtime, redo A2 instead (including the torchvision removal).
+
+### D2. Train the MLP and compare it with the style-matched linear model
+
+```
+!python image/train_clip.py --head mlp --data-dir /content/drive/MyDrive/RealEye/data/image --out-dir /content/drive/MyDrive/RealEye/models/image/clip-mlp-$(date +%Y%m%d-%H%M) --compare-to /content/drive/MyDrive/RealEye/models/image/clip-linear-20261112-2052
+```
+
+- **Keep `clip-mlp-` in the folder name,** so it isn't mistaken for a linear model.
+- **Compare against `clip-linear-20261112-2052`** (style-matched), not the first model, so the head is the only difference.
+- The first line should say `head: mlp 512 -> 256 (GELU, dropout 0.2) -> 1`. It takes a few minutes.
+
+In the `earlier` (linear) and `new` (MLP) lines, look at:
+- **LAION FPR** at the 10% cutoff: the number this is meant to bring down (linear: 15.8%).
+- **Recall** and **F1** at that cutoff (linear: 74.8% and 0.809).
+- **Recall by style**, especially `photo` (linear: 66.7%).
+
+Differences under about 1 point overall, or 2 points per style, could be chance (`ERROR_ANALYSIS.md`). If it prints `still improving at the last round`, rerun with `--epochs 60`.
+
+### D3. Look at the mistakes
+
+Run B5 with the MLP model folder that D2 printed. Share the printouts and the LAION contact sheets, and add the results to `ERROR_ANALYSIS.md`.
+
 ## Troubleshooting
 
 | Problem | Fix |
