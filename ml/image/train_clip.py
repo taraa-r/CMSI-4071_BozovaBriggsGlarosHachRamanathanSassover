@@ -2,21 +2,25 @@
 
 Needs <data-dir>/features/ from extract_features.py. Uses only train + validation, never test.
 
-The classifier is one linear layer (512 numbers in, one score out), the "linear probe" from
-Ojha et al. 2023, "Towards Universal Fake Image Detectors". Each round it sees one random
+The default classifier is one linear layer (512 numbers in, one score out), the "linear probe"
+from Ojha et al. 2023, "Towards Universal Fake Image Detectors". With --head mlp it is two
+layers instead (512 -> --hidden -> 1, with dropout), which can learn combinations of CLIP
+features that a single straight boundary can't (ERROR_ANALYSIS.md). Each round it sees one random
 version of every train image (clean or blur/JPEG-augmented). It tries a few weight-decay
 settings (how strongly the weights are kept small) and keeps the setting and round with the
 lowest validation loss. The AI cutoff is chosen later, in calibration; the 0.5 cutoff below
 is only for a first look.
 
 Run from the ml folder (seconds to minutes, CPU is fine):
-    .venv/bin/python image/train_clip.py [--data-dir PATH] [--compare-to OLD_MODEL_DIR]
+    .venv/bin/python image/train_clip.py [--head mlp] [--data-dir PATH] [--compare-to OLD_MODEL_DIR]
 
---compare-to scores an earlier model (its head.pt) on the same validation images, so the two
-can be compared fairly even if the earlier one was validated on a different set of images.
+--compare-to scores an earlier model (its head.pt, linear or mlp) on the same validation images,
+so the two can be compared fairly even if the earlier one was validated on a different set of images.
 
-Saves to ml/models/image/clip-linear-<date-time>/ (or --out-dir):
-    head.pt                the trained layer (weight, bias) and feature scaling (mean, std)
+Saves to ml/models/image/clip-<linear|mlp>-<date-time>/ (or --out-dir):
+    head.pt                the trained head and feature scaling (mean, std). A linear head is stored
+                           as weight, bias (as before); an mlp head adds "head", "hidden", "dropout"
+                           and its layers under "state" (see load_head)
     config.json            CLIP version, feature and preprocessing settings, chosen settings
     metrics.json           validation results, overall and broken down (see below)
     validation_scores.csv  every validation image's score, for calibration
@@ -48,6 +52,10 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--head", choices=["linear", "mlp"], default="linear",
+                        help="linear: one layer (default); mlp: two layers with dropout")
+    parser.add_argument("--hidden", type=int, default=256, help="mlp only: size of the middle layer")
+    parser.add_argument("--dropout", type=float, default=0.2, help="mlp only: share of the middle layer hidden each step")
     parser.add_argument("--compare-to", type=Path, default=None, help="earlier model folder to compare with")
     parser.add_argument("--target-fpr", type=float, default=0.10, help="false-positive rate for the comparison cutoff")
     return parser.parse_args()
@@ -82,13 +90,36 @@ def at_fpr(df: pd.DataFrame, target: float) -> dict:
     }
 
 
+def make_head(kind: str, dim: int, hidden: int = 256, dropout: float = 0.2) -> torch.nn.Module:
+    """The classifier on top of CLIP: one straight boundary (linear) or two layers that can bend (mlp)."""
+    if kind == "linear":
+        return torch.nn.Linear(dim, 1)
+    return torch.nn.Sequential(
+        torch.nn.Linear(dim, hidden),  # 512 CLIP numbers -> `hidden` mini-detectors
+        torch.nn.GELU(),               # the bend: each mini-detector switches on only for its pattern
+        torch.nn.Dropout(dropout),     # training only: randomly hides some, so none is relied on alone
+        torch.nn.Linear(hidden, 1),    # mini-detectors -> one AI score
+    )
+
+
+def load_head(path: Path, dim: int) -> tuple[torch.nn.Module, dict]:
+    """A saved head.pt (linear or mlp) in eval mode, plus its feature scaling (mean, std)."""
+    saved = torch.load(path)
+    kind = saved.get("head", "linear")  # files saved before --head existed are linear
+    if kind == "linear":
+        head = make_head("linear", dim)
+        head.load_state_dict({"weight": saved["weight"], "bias": saved["bias"]})
+    else:
+        head = make_head(kind, dim, saved["hidden"], saved["dropout"])
+        head.load_state_dict(saved["state"])
+    return head.eval(), {"mean": saved["mean"], "std": saved["std"]}
+
+
 def score_with(model_dir: Path, x_val_raw: torch.Tensor) -> np.ndarray:
     """Scores from a saved head.pt (with its own feature scaling) on L2-normalized features."""
-    saved = torch.load(model_dir / "head.pt")
-    layer = torch.nn.Linear(x_val_raw.shape[-1], 1)
-    layer.load_state_dict({"weight": saved["weight"], "bias": saved["bias"]})
+    head, scale = load_head(model_dir / "head.pt", x_val_raw.shape[-1])
     with torch.no_grad():
-        logits = layer((x_val_raw - saved["mean"]) / saved["std"]).squeeze(1).numpy()
+        logits = head((x_val_raw - scale["mean"]) / scale["std"]).squeeze(1).numpy()
     return 1 / (1 + np.exp(-logits))
 
 
@@ -117,9 +148,9 @@ def scaler(x_train: torch.Tensor) -> dict:
 
 
 def train(x_train, y_train, x_val, y_val, weight_decay, args):
-    """Return (best validation loss, best epoch, best layer state, loss per epoch)."""
+    """Return (best validation loss, best epoch, best head state, loss per epoch)."""
     torch.manual_seed(SEED)
-    layer = torch.nn.Linear(x_train.shape[-1], 1)
+    layer = make_head(args.head, x_train.shape[-1], args.hidden, args.dropout)
     optimizer = torch.optim.AdamW(layer.parameters(), lr=args.learning_rate, weight_decay=weight_decay)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     generator = torch.Generator().manual_seed(SEED)
@@ -128,12 +159,14 @@ def train(x_train, y_train, x_val, y_val, weight_decay, args):
     for epoch in range(1, args.epochs + 1):
         view = torch.randint(views, (n,), generator=generator)  # one random version per image
         order = torch.randperm(n, generator=generator)
+        layer.train()  # dropout on while learning
         for start in range(0, n, args.batch_size):
             idx = order[start:start + args.batch_size]
             optimizer.zero_grad()
             loss = loss_fn(layer(x_train[idx, view[idx]]).squeeze(1), y_train[idx])
             loss.backward()
             optimizer.step()
+        layer.eval()  # dropout off, so validation sees the whole model
         with torch.no_grad():
             val_loss = loss_fn(layer(x_val).squeeze(1), y_val).item()
         history.append(round(val_loss, 5))
@@ -191,7 +224,9 @@ def main():
     scale = scaler(x_train)
     x_train = (x_train - scale["mean"]) / scale["std"]
     x_val = (x_val - scale["mean"]) / scale["std"]
-    print(f"Train {len(y_train):,} images x {x_train.shape[1]} versions | validation {len(y_val):,}")
+    head_desc = (f"linear {x_train.shape[-1]} -> 1" if args.head == "linear" else
+                 f"mlp {x_train.shape[-1]} -> {args.hidden} (GELU, dropout {args.dropout}) -> 1")
+    print(f"Train {len(y_train):,} images x {x_train.shape[1]} versions | validation {len(y_val):,} | head: {head_desc}")
 
     runs = {}
     for wd in WEIGHT_DECAYS:
@@ -204,8 +239,9 @@ def main():
     if best["epoch"] == args.epochs:
         print(f"  Note: still improving at the last round; try again with --epochs {args.epochs * 2}.")
 
-    layer = torch.nn.Linear(x_train.shape[-1], 1)
+    layer = make_head(args.head, x_train.shape[-1], args.hidden, args.dropout)
     layer.load_state_dict(best["state"])
+    layer.eval()
     with torch.no_grad():
         logits = layer(x_val).squeeze(1).numpy()
     scores = val_info.assign(logit=logits, score=1 / (1 + np.exp(-logits)))
@@ -225,16 +261,23 @@ def main():
                           "new": (overall, details[f"at_fpr_{args.target_fpr}"])}, args.target_fpr)
 
     settings = json.loads((features_dir / "settings.json").read_text())
-    out_dir = args.out_dir or MODELS_DIR / f"clip-linear-{datetime.now():%Y%m%d-%H%M}"
+    out_dir = args.out_dir or MODELS_DIR / f"clip-{args.head}-{datetime.now():%Y%m%d-%H%M}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({**best["state"], "mean": scale["mean"], "std": scale["std"]}, out_dir / "head.pt")
+    scaling = {"mean": scale["mean"], "std": scale["std"]}
+    if args.head == "linear":
+        saved = {**best["state"], **scaling}  # same format as before, so older readers still work
+    else:
+        saved = {"head": "mlp", "hidden": args.hidden, "dropout": args.dropout, "state": best["state"], **scaling}
+    torch.save(saved, out_dir / "head.pt")
     manifest_path = args.data_dir / "manifest.json"
     (out_dir / "config.json").write_text(json.dumps({
-        **settings, "head": "linear 512 -> 1 on L2-normalized, then standardized (head.pt mean/std) features; score = sigmoid(logit)",
+        **settings, "head": f"{head_desc} on L2-normalized, then standardized (head.pt mean/std) features; score = sigmoid(logit)",
+        "head_kind": args.head,
         "label_meaning": {"0": "real", "1": "AI"}, "preprocess": PREPROCESS,
         "chosen": {"weight_decay": wd, "epoch": best["epoch"]},
         "training": {"epochs": args.epochs, "batch_size": args.batch_size, "learning_rate": args.learning_rate,
-                     "weight_decays_tried": WEIGHT_DECAYS, "seed": SEED},
+                     "weight_decays_tried": WEIGHT_DECAYS, "seed": SEED,
+                     **({"hidden": args.hidden, "dropout": args.dropout} if args.head == "mlp" else {})},
         "dataset_revision": json.loads(manifest_path.read_text()).get("dataset_revision") if manifest_path.exists() else None,
     }, indent=2))
     (out_dir / "metrics.json").write_text(json.dumps({
