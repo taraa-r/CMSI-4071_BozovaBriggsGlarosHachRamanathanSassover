@@ -9,7 +9,7 @@ The model has partly learned **"doesn't look like a normal photo = AI."** That o
 - **Real images that aren't ordinary snapshots get flagged:** human-made digital art, CGI, posters, and glossy studio or promo photos.
 - **AI images that look like ordinary photos slip through:** photorealistic AI is the hardest to catch, and it's the kind that matters most for misinformation.
 
-The cause is in the data. After the Nov 11 illustration cap, **graphics and 3D renders were still about twice as common among AI images as among real ones**, so the model could use style as a shortcut. The fix is to match every style between real and AI, then retrain.
+The first suspected cause was in the data. After the Nov 11 illustration cap, **graphics and 3D renders were still about twice as common among AI images as among real ones**, so the model could use style as a shortcut. We matched every style between real and AI in train and retrained. **It made no real difference:** LAION false alarms stayed at about 15–16%, with only a small gain on photorealistic AI (+2.3 points). Style imbalance was not the main cause; see [Results after style matching](#results-after-style-matching). How to handle the false alarms is still to be decided.
 
 ## How the analysis was done
 
@@ -199,11 +199,64 @@ Both stay known limitations for the write-up and the extension's wording. For ex
 
 ## Results after style matching
 
-*To be filled in after the rerun (COLAB.md, Part C): the `label_styles.py` counts, the new validation results, the `--compare-to` table, and a new `analyze_errors.py` run.*
+### Train after matching (`label_styles.py`, Nov 12)
+
+| Style group | Real before | AI before | Each after matching |
+| --- | --- | --- | --- |
+| photo (clear) | 6,372 (32%) | 4,335 (22%) | 4,335 (26%) |
+| photo (unclear) | 7,203 (36%) | 6,075 (30%) | 6,075 (36%) |
+| graphic | 3,411 (17%) | 4,572 (23%) | 3,411 (20%) |
+| render | 2,586 (13%) | 3,356 (17%) | 2,586 (15%) |
+| illustration | 428 (2%) | 1,662 (8%) | 428 (3%) |
+| **Total** | **20,000** | **20,000** | **16,835** |
+
+Matching dropped 6,330 of 40,000 train images (16%): 3,165 real photos (mostly clear ones), and 3,165 AI illustrations, graphics and renders. This is less than the 20–25% estimated. The first model trained on 37,808 images (illustration cap only); this one trains on 33,670. Validation keeps all 5,000 images.
+
+### New validation results (`train_clip.py`, Nov 12)
+
+New model: `clip-linear-20261112-2052`, trained on 33,670 images × 3 versions. Chosen: weight decay 0, round 27 of 30. Weight decays 0, 0.01 and 0.1 were again nearly identical (validation loss 0.3874–0.3885); 1.0 was worse (0.4002).
+
+Both models scored on the **same 5,000 validation images** (`--compare-to`). The first model's numbers differ slightly from INITIAL_TRAINING_RESULTS.md, which used 4,454 validation images.
+
+| | First model (`-0823`) | Style-matched (`-2052`) | Change |
+| --- | --- | --- | --- |
+| **At the 0.5 cutoff** | | | |
+| F1 | 0.834 | 0.834 | 0 |
+| False-positive rate | 20.3% | 21.6% | +1.3 |
+| AUC | 0.912 | 0.910 | −0.002 |
+| **At the cutoff that flags 10% of real images** | 0.683 | 0.690 | |
+| Recall (AI caught) | 75.2% | 74.8% | −0.4 |
+| F1 | 0.812 | 0.809 | −0.003 |
+| LAION false-positive rate | 15.4% | 15.8% | +0.4 |
+| Pexels false-positive rate | 4.6% | 4.2% | −0.4 |
+| Recall, photo AI | 64.4% | 66.7% | **+2.3** |
+| Recall, graphic AI | 80.2% | 75.6% | **−4.6** |
+| Recall, render AI | 86.9% | 82.6% | **−4.3** |
+| Recall, illustration AI | 91.8% | 92.4% | +0.6 |
+
+Score vs. file size (Spearman), new model: real 0.008, AI 0.163. Still near 0, so the model doesn't follow file size.
+
+**How big a change counts:** with about 2,500 images per class, overall numbers vary by about ±1 point by chance. Per style (430–1,250 images each), they vary by about ±1.5–2 points.
+
+**What changed:**
+- **Overall and by real source: nothing beyond chance.** F1, AUC and recall are the same, and **LAION false alarms stayed at about 15–16%**.
+- **By style, a small shift in the expected direction.** Photo-style AI is caught a bit more often (+2.3), and graphic and render AI less often (about −4.5). Without the style shortcut, stylized AI is no longer an easy catch, and photorealistic AI, which matters most for misinformation, gains slightly.
+
+**What this means:** style imbalance in the training data was **not the main cause** of the LAION false alarms. Matching removed the imbalance, and the false alarms didn't move. A likely explanation, from the contact sheets: within each style, AI and real images still differ in *polish*. AI graphics are glossy where many real ones are plain flyers; AI "clear photos" look like studio shots where many real ones are snapshots. The flagged LAION images share a web look (posters, composites, movie stills, retouched promo photos) that is rare on Pexels, even though Pexels is also professional photography. A frozen CLIP with one linear layer draws a single straight boundary through CLIP's features. If that look and AI images sit close together in those features, rebalancing the data can't separate them.
+
+**Which model to keep:** the two are equivalent within chance. The style-matched model (`clip-linear-20261112-2052`) is preferred: it is slightly better on photo-style AI, it trained without the style shortcut, and its validation set is the full, unmatched one that calibration and the test will use.
+
+`analyze_errors.py` has not been run on the new model yet (COLAB.md, C5).
+
+### Options (decision pending)
+
+1. **Move on to calibration:** both targets are met on validation at a 10% false-positive rate (F1 0.81). Document LAION-type images (posters, CGI, digital art, retouched photos) as a known limitation, and let the test set show how the model handles new real sources (DOCCI, ImageNet).
+2. **Give LAION real images more weight in training** (minutes to try). This pushes the boundary away from LAION-looking real images, likely at some cost in recall.
+3. **A larger classifier:** a small two-layer head (cheap), or the larger CLIP ViT-L/14 (re-extract all features; about 3× slower on the server). Both target the "one straight boundary" limit directly.
 
 ## Next steps
 
-1. Rerun on Colab with style matching (COLAB.md, Part C) and fill in the section above.
+1. Choose one of the options above for the LAION false alarms.
 2. Calibration (`image/calibrate.py`, modeled on `text/calibrate.py`), with a target false-positive rate of about 8% and the 10%/9%/8%/7%/5% comparison.
 3. One-time test set evaluation: overall, by style, by real source (DOCCI, ImageNet) and on unseen generators.
 4. Server integration.
