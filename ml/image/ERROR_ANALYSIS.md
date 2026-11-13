@@ -1,6 +1,6 @@
 # Image Classifier — Error Analysis
 
-This looks at where the first full CLIP model (`clip-linear-20261112-0823`, see [INITIAL_TRAINING_RESULTS.md](INITIAL_TRAINING_RESULTS.md)) goes wrong on the validation set, and explains the fix chosen: **style matching**. All numbers are from validation (2,227 real + 2,227 AI images). The test set has not been used.
+This looks at where the first full CLIP model (`clip-linear-20261112-0823`, see [INITIAL_TRAINING_RESULTS.md](INITIAL_TRAINING_RESULTS.md)) goes wrong on the validation set, and the two fixes tried: **style matching** (no real effect) and a **two-layer (MLP) classifier head** (much better at catching AI images; now the chosen model). All numbers are from validation (2,227 real + 2,227 AI images). The test set has not been used.
 
 ## Summary
 
@@ -9,7 +9,9 @@ The model has partly learned **"doesn't look like a normal photo = AI."** That o
 - **Real images that aren't ordinary snapshots get flagged:** human-made digital art, CGI, posters, and glossy studio or promo photos.
 - **AI images that look like ordinary photos slip through:** photorealistic AI is the hardest to catch, and it's the kind that matters most for misinformation.
 
-The first suspected cause was in the data. After the Nov 11 illustration cap, **graphics and 3D renders were still about twice as common among AI images as among real ones**, so the model could use style as a shortcut. We matched every style between real and AI in train and retrained. **It made no real difference:** LAION false alarms stayed at about 15–16%, with only a small gain on photorealistic AI (+2.3 points). Style imbalance was not the main cause; see [Results after style matching](#results-after-style-matching). How to handle the false alarms is still to be decided.
+The first suspected cause was in the data. After the Nov 11 illustration cap, **graphics and 3D renders were still about twice as common among AI images as among real ones**, so the model could use style as a shortcut. We matched every style between real and AI in train and retrained. **It made no real difference:** LAION false alarms stayed at about 15–16%, with only a small gain on photorealistic AI (+2.3 points). Style imbalance was not the main cause; see [Results after style matching](#results-after-style-matching).
+
+**A two-layer (MLP) classifier head made the big difference** (Nov 12; see [Two-layer (MLP) head](#two-layer-mlp-head-nov-12)). On the same validation images, at a 10% false-positive rate, it catches **85.3% of AI images instead of 74.8%** (F1 0.873 vs. 0.809), including **81% of photorealistic AI instead of 67%**. It is now the chosen model. It did not change *which* real images get flagged: LAION is still flagged about 3.7× as often as Pexels. Its higher recall makes a stricter cutoff affordable, so the target is an **8% false-positive rate**: about 82% of AI images caught (F1 0.864), with LAION at 12.8% and Pexels at 3.2%, a known limitation for the write-up.
 
 ## How the analysis was done
 
@@ -248,15 +250,90 @@ Score vs. file size (Spearman), new model: real 0.008, AI 0.163. Still near 0, s
 
 `analyze_errors.py` has not been run on the new model yet (COLAB.md, C5).
 
-### Options (decision pending)
+### Options considered
 
 1. **Move on to calibration:** both targets are met on validation at a 10% false-positive rate (F1 0.81). Document LAION-type images (posters, CGI, digital art, retouched photos) as a known limitation, and let the test set show how the model handles new real sources (DOCCI, ImageNet).
 2. **Give LAION real images more weight in training** (minutes to try). This pushes the boundary away from LAION-looking real images, likely at some cost in recall.
 3. **A larger classifier:** a small two-layer head (cheap), or the larger CLIP ViT-L/14 (re-extract all features; about 3× slower on the server). Both target the "one straight boundary" limit directly.
 
+**Tried: option 3, the two-layer head** (below). It is much better at catching AI images, and it is now the chosen model. Options 2 and ViT-L/14 were not tried.
+
+## Two-layer (MLP) head (Nov 12)
+
+**What changed:** Noa added `--head mlp` to `train_clip.py`. Instead of one linear layer, the classifier has two layers: 512 CLIP features → 256 → 1.
+- **GELU** between the layers lets each of the 256 middle units switch on only for its own pattern. This is what lets the boundary bend: a stack of linear layers without it would still be one straight line.
+- **Dropout 0.2** randomly turns off 20% of the middle units on each training step, so the model can't rely on a few of them. It is off when scoring.
+
+Everything else is unchanged: same CLIP features (with blur/JPEG versions), same 33,670 style-matched training images, same 5,000 validation images, same weight decays (0, 0.01, 0.1, 1.0), 30 rounds, lowest validation loss kept. Run with COLAB.md, Part D. Model: `clip-mlp-20261113-0104` on Drive (the folder's date comes from Colab's clock, which runs on UTC).
+
+### Results
+
+Both models scored on the **same 5,000 validation images** (`--compare-to clip-linear-20261112-2052`):
+
+| | Linear (`-2052`) | **MLP (`clip-mlp-20261113-0104`)** | Change |
+| --- | --- | --- | --- |
+| Best validation loss | 0.387 | **0.313** | −0.074 |
+| AUC | 0.910 | **0.946** | +0.036 |
+| **At the 0.5 cutoff** | | | |
+| F1 | 0.834 | **0.876** | +0.042 |
+| False-positive rate | 21.6% | **16.3%** | −5.3 |
+| Recall | 86.9% | **90.7%** | +3.8 |
+| **At the cutoff that flags 10% of real images** | 0.690 | 0.684 | |
+| Recall (AI caught) | 74.8% | **85.3%** | **+10.5** |
+| F1 | 0.809 | **0.873** | **+0.064** |
+| LAION false-positive rate | 15.8% | 15.8% | 0 |
+| Pexels false-positive rate | 4.2% | 4.2% | 0 |
+| Recall, photo AI | 66.7% | **81.0%** | **+14.3** |
+| Recall, graphic AI | 75.6% | 86.5% | +10.9 |
+| Recall, render AI | 82.6% | 88.9% | +6.3 |
+| Recall, illustration AI | 92.4% | 94.4% | +2.0 |
+
+Score vs. file size (Spearman), MLP: real 0.018, AI 0.118. Still near 0, so the model doesn't follow file size.
+
+**What changed:**
+- **Much better at catching AI images,** far beyond chance (overall numbers vary by about ±1 point by chance). The biggest gain is on **photorealistic AI (+14.3 points)**, the weakest spot and the kind that matters most for scams and misinformation.
+- **The hardest generators improved too** (cutoff 0.5): flux-1.1-pro 53% → 73% caught, sdxl-realvis-v5 50% → 77%, midjourney-6 58% → 82%. qwen-image is still the hardest (43%), followed by stable-diffusion-v1-4 (64%).
+- **The LAION/Pexels split didn't change.** At the 10% cutoff, both models flag exactly 197 LAION and 53 Pexels images. (The code scores the two models separately; the identical counts are a coincidence, but the pattern is real.) The MLP got much better at recognizing AI images, not at recognizing that a polished poster or promo photo is real. LAION is still flagged about 3.7× as often as Pexels at every cutoff.
+
+**This confirms the "one straight boundary" explanation for missed AI images, but not for the LAION false alarms.** Those look AI-like to CLIP's features in a way the classifier on top can't undo.
+
+### Training behaviour
+
+| Weight decay | Best validation loss | At round | After that |
+| --- | --- | --- | --- |
+| 0 | 0.320 | 3 | rises steadily to 0.61 by round 30 |
+| 0.01 | 0.320 | 3 | rises to 0.60 |
+| 0.1 | 0.320 | 3 | rises to 0.52 |
+| **1.0** | **0.313** | **13** | stays between 0.31 and 0.35 |
+
+- **With little weight decay, the MLP overfits fast:** it learns the useful patterns in about 3 rounds, then starts memorizing the training images. Early stopping keeps round 3, so this does no harm.
+- **Strong weight decay (1.0) keeps it in check:** the curve stays flat for all 30 rounds and reaches the lowest loss. The lowest loss in `metrics.json` is weight decay 1.0 at round 13; the printout's `Chosen:` line wasn't captured.
+- **Caveat:** the 1.0 curve is bumpy (0.31–0.35 from round to round), and the best of 120 checkpoints is picked on validation, so validation results are slightly optimistic. Calibration (other half of validation) and the test set will show how much.
+- **Possible tuning, not needed to move on:** weight decay 3.0, more dropout, or a lower learning rate might give a smoother curve.
+
+### Cutoff choice: 8% false positives (decided Nov 12)
+
+With the MLP's higher recall, a stricter cutoff is affordable. Validation, MLP scores:
+
+| Target false-positive rate | Cutoff | Recall (AI caught) | F1 | LAION FPR | Pexels FPR |
+| --- | --- | --- | --- | --- | --- |
+| 5% | 0.855 | 75.4% | 0.836 | 7.9% | 2.1% |
+| **8% (chosen)** | **0.750** | **82.2%** | **0.864** | **12.8%** | **3.2%** |
+| 10% | 0.684 | 85.3% | 0.873 | 15.8% | 4.2% |
+
+For comparison, the linear model at 5% caught only 60.0% of AI images (F1 0.727, below target), with LAION at 8.0%. At the same strictness, the MLP has the same LAION rate and catches 15 points more AI images.
+
+**Decision: target an 8% false-positive rate.**
+- **Why not 10%:** it leaves no margin. The text model aimed for 5% on validation and got 5.9% on test, so rates drift up on new data. 8% leaves 2 points under the SRS limit of 10% (5.4.21).
+- **Why not 5%:** 8% catches about 7 points more AI images (82% vs. 75%; F1 0.864 vs. 0.836), and still meets the overall target with room to spare.
+- **Known limitation that comes with it:** LAION-type real images (posters, CGI, digital art, retouched promo photos) are flagged about **12.8%** of the time, above 10% for that source alone, while stock photos (Pexels) stay at 3.2%. The SRS target is the overall rate, so this isn't a failure, but it goes in the write-up and should shape the extension's wording (e.g. "may be AI-generated or digitally edited").
+- **Fixed before the test set:** the target can't be lowered after seeing test results without making them optimistic.
+
+These cutoffs were chosen and graded on the same validation images. Calibration will choose the 8% cutoff on one half of validation and check it on the other half.
+
 ## Next steps
 
-1. Choose one of the options above for the LAION false alarms.
-2. Calibration (`image/calibrate.py`, modeled on `text/calibrate.py`), with a target false-positive rate of about 8% and the 10%/9%/8%/7%/5% comparison.
+1. Run `analyze_errors.py` on the MLP model (COLAB.md, D3) to see which images are still flagged and missed.
+2. Calibration for the MLP model (`image/calibrate.py`, modeled on `text/calibrate.py`): Platt scaling, a cutoff for an **8% false-positive rate** chosen on one half of validation and checked on the other, plus the 10%/8%/5% comparison.
 3. One-time test set evaluation: overall, by style, by real source (DOCCI, ImageNet) and on unseen generators.
-4. Server integration.
+4. Server integration (CLIP + the MLP head + calibration; the head adds almost nothing to the server's work).
