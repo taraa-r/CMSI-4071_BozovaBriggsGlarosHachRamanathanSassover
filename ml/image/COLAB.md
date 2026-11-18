@@ -244,6 +244,40 @@ Differences under about 1 point overall, or 2 points per style, could be chance 
 
 Run B5 with the MLP model folder that D2 printed. Share the printouts and the LAION contact sheets, and add the results to `ERROR_ANALYSIS.md`.
 
+## Part E: calibrate the image model (CPU is fine)
+
+Calibration reads the saved validation scores (`validation_scores.csv`), so it needs no GPU and doesn't rerun CLIP. It never reads the test set.
+
+### E1. Get the latest code
+
+Use a **CPU** runtime (Runtime → Change runtime type → CPU), then:
+
+```
+from google.colab import drive
+drive.mount('/content/drive')
+```
+
+```
+!rm -rf /content/realeye
+!git clone https://github.com/taraa-r/CMSI-4071_BozovaBriggsGlarosHachRamanathanSassover.git /content/realeye
+%cd /content/realeye/ml
+!pip install -q -r requirements.txt
+```
+
+### E2. Calibrate and choose the cutoff
+
+```
+!python image/calibrate.py --model-dir /content/drive/MyDrive/RealEye/models/image/clip-mlp-20261113-0104
+```
+
+It takes a few seconds. The cutoff target is 8% false positives by default (decided Nov 12; change it with `--target-fpr`). It prints:
+
+1. **Calibration:** temperature scaling (`T`) and Platt scaling (`a`, `b`), both fitted on half A, and ECE, log loss and Brier score for raw, temperature and Platt on half B (lower is better). Then the `Chosen:` line. **Temperature is used unless Platt's ECE is lower by more than 0.01 and its log loss is lower.**
+2. **Cutoff** for at most 8% false positives, chosen on half B.
+3. **Check on half A:** F1, false-positive rate and recall at that cutoff (targets: F1 ≥ 0.75, false positives ≤ 10%), then false positives by real source (LAION, Pexels) and recall by style, and the 10% / 8% / 5% comparison.
+
+It saves `calibration.json` (what the server loads) and `reliability.png` (chart of estimate vs. how often it's really AI) to the model folder. Share the printout and the chart, and add the results to `ERROR_ANALYSIS.md`. Don't run the test set until calibration is recorded.
+
 ## Troubleshooting
 
 | Problem | Fix |

@@ -1,6 +1,6 @@
 # Image Classifier — Error Analysis
 
-This looks at where the first full CLIP model (`clip-linear-20261112-0823`, see [INITIAL_TRAINING_RESULTS.md](INITIAL_TRAINING_RESULTS.md)) goes wrong on the validation set, and the two fixes tried: **style matching** (no real effect) and a **two-layer (MLP) classifier head** (much better at catching AI images; now the chosen model). All numbers are from validation (2,227 real + 2,227 AI images). The test set has not been used.
+This looks at where the first full CLIP model (`clip-linear-20261112-0823`, see [INITIAL_TRAINING_RESULTS.md](INITIAL_TRAINING_RESULTS.md)) goes wrong on the validation set, and the two fixes tried: **style matching** (no real effect) and a **two-layer (MLP) classifier head** (much better at catching AI images; now the chosen model). All numbers are from validation (2,227 real + 2,227 AI images in the first analysis; all 2,500 + 2,500 from style matching on). The test set has not been used.
 
 ## Summary
 
@@ -12,6 +12,8 @@ The model has partly learned **"doesn't look like a normal photo = AI."** That o
 The first suspected cause was in the data. After the Nov 11 illustration cap, **graphics and 3D renders were still about twice as common among AI images as among real ones**, so the model could use style as a shortcut. We matched every style between real and AI in train and retrained. **It made no real difference:** LAION false alarms stayed at about 15–16%, with only a small gain on photorealistic AI (+2.3 points). Style imbalance was not the main cause; see [Results after style matching](#results-after-style-matching).
 
 **A two-layer (MLP) classifier head made the big difference** (Nov 12; see [Two-layer (MLP) head](#two-layer-mlp-head-nov-12)). On the same validation images, at a 10% false-positive rate, it catches **85.3% of AI images instead of 74.8%** (F1 0.873 vs. 0.809), including **81% of photorealistic AI instead of 67%**. It is now the chosen model. It did not change *which* real images get flagged: LAION is still flagged about 3.7× as often as Pexels. Its higher recall makes a stricter cutoff affordable, so the target is an **8% false-positive rate**: about 82% of AI images caught (F1 0.864), with LAION at 12.8% and Pexels at 3.2%, a known limitation for the write-up.
+
+**Error analysis of the MLP at the 8% cutoff** (Nov 17; see [MLP error analysis](#mlp-error-analysis-8-cutoff-nov-17)): the MLP no longer flags LAION graphics and renders more often than LAION photos (all about 12–16%), so the style effect is gone. What remains is a **polish effect**: professional, studio-lit or retouched real images (publicity photos, movie stills, posters, art photography) get flagged, and AI images that look like messy everyday web content (flyers, event snapshots, promo graphics) slip through. No file-size or style shortcut is involved, and many of these mistakes are confident, so they can't be tuned away with the cutoff. No more model changes before calibration.
 
 ## How the analysis was done
 
@@ -331,9 +333,78 @@ For comparison, the linear model at 5% caught only 60.0% of AI images (F1 0.727,
 
 These cutoffs were chosen and graded on the same validation images. Calibration will choose the 8% cutoff on one half of validation and check it on the other half.
 
+## MLP error analysis (8% cutoff, Nov 17)
+
+`analyze_errors.py --target-fpr 0.08` on `clip-mlp-20261113-0104`, all 5,000 validation images (2,500 real + 2,500 AI). Cutoff **0.750**. It was chosen on these same images, so the overall false-positive rate is 8.0% by construction.
+
+### Real images wrongly flagged: 200 of 2,500 (8.0%)
+
+| Source | Images | Flagged | % flagged | Share of all false alarms |
+| --- | --- | --- | --- | --- |
+| LAION | 1,250 | 160 | 12.8% | 80% |
+| Pexels | 1,250 | 40 | 3.2% | 20% |
+
+By source and CLIP style, next to the first linear model's analysis (`-0823`):
+
+| Source | Style | Images | Flagged | **MLP % flagged** | Share of all | Linear % flagged |
+| --- | --- | --- | --- | --- | --- | --- |
+| LAION | graphic | 222 | 27 | **12.2%** | 14% | 23.5% |
+| LAION | illustration | 20 | 3 | 15.0% | 2% | 21.1% |
+| LAION | photo | 945 | 120 | **12.7%** | 60% | 12.8% |
+| LAION | render | 63 | 10 | 15.9% | 5% | 21.7% |
+| Pexels | graphic | 147 | 2 | 1.4% | 1% | 5.5% |
+| Pexels | illustration | 13 | 0 | 0.0% | 0% | 8.3% |
+| Pexels | photo | 950 | 31 | 3.3% | 16% | 4.2% |
+| Pexels | render | 140 | 7 | 5.0% | 4% | 8.1% |
+
+**Not a like-for-like comparison:** the linear numbers are at the cutoff that flags 10% of real images (not 8%), on the older illustration-capped validation set (1,103 LAION, 1,124 Pexels). The stricter cutoff alone lowers every rate a little. Illustration and render groups are small (13–140 images), so their rates can move several points by chance.
+
+**Findings:**
+
+- **The style effect inside LAION is gone.** The linear model flagged LAION graphics and renders almost twice as often as LAION photos (21–24% vs. 12.8%). The MLP flags all LAION styles about equally (12–16%). The graphic drop (23.5% → 12.2%) is too large to be explained by the cutoff or by chance.
+- **LAION photos didn't improve** (12.8% → 12.7%) and are now **60% of all false alarms**. LAION is still flagged 4× as often as Pexels.
+- **No shortcuts.** False alarms and correctly passed real images have almost the same file size (LAION 26.1 vs. 24.6 KB, Pexels 24.9 vs. 23.7 KB) and the same CLIP photo score (LAION 0.76 vs. 0.79, Pexels 0.65 vs. 0.68).
+- **Many false alarms are confident:** 46% of LAION and 52% of Pexels false alarms scored 0.9 or higher. A slightly stricter cutoff would not remove them.
+
+**What the contact sheets show** (`errors/` in the model folder):
+
+- `false_alarms_laion_top.png`: celebrity publicity photos, posed cast and team shots, movie stills (*Elf*, *Avengers*), a retro ad poster, studio portraits on plain backgrounds, a product shot, a press-conference backdrop. Almost all are **professional, studio-lit, retouched or composited**.
+- `false_alarms_laion_random.png`: the same kind, at less extreme scores: promo portraits, team photos, posters, a TV-show screenshot.
+- `correct_laion_random.png`: mostly everyday or candid images (crowds, sports action, events, casual and catalog photos), though some fashion catalog shots on white also pass.
+- `false_alarms_pexels_top.png`: high-end art photography: dramatic or moody lighting, face paint with colored smoke, perfect symmetry, studio portraits on plain backgrounds, a surreal render.
+
+### AI images caught: 2,054 of 2,500 (82.2%)
+
+| AI style | Images | Caught | % caught |
+| --- | --- | --- | --- |
+| illustration | 354 | 327 | 92.4% |
+| render | 459 | 393 | 85.6% |
+| graphic | 430 | 360 | 83.7% |
+| **photo** | **1,257** | **974** | **77.5%** |
+
+By generator (about 44 images each, so any one rate can be off by about ±7 points by chance; read as a trend):
+
+- **Hardest, all photorealistic:** qwen-image 34.1%, flux-1.1-pro 56.8%, stable-diffusion-v1-5 56.8%, stable-diffusion-v1-4 59.1%, flux.2-klein-4b 61.4%, sd-3.5 63.6%, sdxl-realvis-v5 63.6%.
+- **Easiest, mostly anime and stylized:** studio-ghibli-wan2.1 100%, several cyberrealistic-pony, animagine and SDXL variants 93–98%.
+- Missed: 446. Only 14% of them scored below 0.1, so most misses are near the cutoff.
+
+**What the missed images look like** (`missed_ai_top.png`, the AI images the model is surest are real, scores 0.00–0.02): a text-heavy protest flyer, an event and red-carpet photo, a racetrack at night, a thank-you card, a hashtag promo graphic, casual snapshots. They look like **messy, cluttered or text-heavy everyday web content**.
+
+### What it means
+
+The two kinds of mistake mirror each other. The model has partly learned **"polished and idealized = AI, ordinary and messy = real."** Real images with a professional, perfectly lit look (publicity photos, posters, art photography) get flagged; AI images made to look like casual web content slip through.
+
+This is not a data shortcut that matching can remove: style matching already took out the style imbalance, the MLP took out the style effect, and file size shows no effect. It is an overlap in CLIP's features. Modern generators imitate professional photography, so polished real photos and AI images sit close together.
+
+**Decisions:**
+
+- **No more model changes before calibration.** The MLP stays the chosen model; the remaining errors are this overlap, not a bug or a fixable shortcut.
+- **Known limitation for the write-up and the extension:** polished or retouched real images are flagged more often (about 13% for web images vs. 3% for stock photos), and AI images that look like casual web content are caught less often. This supports wording like "may be AI-generated or heavily edited," with the C2PA and SynthID evidence shown next to the model estimate.
+- **To watch on the test set:** photo-style recall, and whether the web-vs-stock gap carries over to the test's real sources (DOCCI, ImageNet).
+
 ## Next steps
 
-1. Run `analyze_errors.py` on the MLP model (COLAB.md, D3) to see which images are still flagged and missed.
-2. Calibration for the MLP model (`image/calibrate.py`, modeled on `text/calibrate.py`): Platt scaling, a cutoff for an **8% false-positive rate** chosen on one half of validation and checked on the other, plus the 10%/8%/5% comparison.
+1. ~~Run `analyze_errors.py` on the MLP model (COLAB.md, D3).~~ Done Nov 17; see [MLP error analysis](#mlp-error-analysis-8-cutoff-nov-17).
+2. Calibration for the MLP model (`image/calibrate.py`, modeled on `text/calibrate.py`; COLAB.md Part E): temperature scaling vs. Platt scaling, fitted on one half of validation and graded on the other (temperature unless Platt's ECE is lower by more than 0.01 and its log loss is lower), a cutoff for an **8% false-positive rate** chosen on one half of validation and checked on the other, plus the 10%/8%/5% comparison.
 3. One-time test set evaluation: overall, by style, by real source (DOCCI, ImageNet) and on unseen generators.
 4. Server integration (CLIP + the MLP head + calibration; the head adds almost nothing to the server's work).
