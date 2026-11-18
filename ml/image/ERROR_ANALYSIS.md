@@ -495,5 +495,5 @@ The 10% target lands at 9.7%, too close to the SRS limit for the test set; 8% ke
 
 1. ~~Run `analyze_errors.py` on the MLP model (COLAB.md, D3).~~ Done Nov 17; see [MLP error analysis](#mlp-error-analysis-8-cutoff-nov-17).
 2. ~~Calibration for the MLP model (`image/calibrate.py`, COLAB.md Part E).~~ Done Nov 17: Platt (a = 0.771, b = −0.359), cutoff 0.6205; see [Calibration](#calibration-nov-17).
-3. One-time test set evaluation (COLAB.md Part F: `prepare_data.py --splits test`, then `evaluate_test.py`): overall with PASS/FAIL on the SRS targets, by style, by real source (DOCCI, ImageNet) and by generator (all unseen).
+3. ~~One-time test set evaluation (COLAB.md Part F).~~ Done Nov 18: F1 0.847 and false-positive rate 7.2%, both SRS targets pass; DOCCI photos flagged 15.2% vs. ImageNet 0.4%. See [FINAL_TEST_RESULTS.md](FINAL_TEST_RESULTS.md).
 4. Server integration (CLIP + the MLP head + calibration; the head adds almost nothing to the server's work).
