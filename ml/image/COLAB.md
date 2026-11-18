@@ -278,6 +278,43 @@ It takes a few seconds. The cutoff target is 8% false positives by default (deci
 
 It saves `calibration.json` (what the server loads) and `reliability.png` (chart of estimate vs. how often it's really AI) to the model folder. Share the printout and the chart, and add the results to `ERROR_ANALYSIS.md`. Don't run the test set until calibration is recorded.
 
+## Part F: the one-time test set
+
+**Only when the model, calibration and cutoff are final.** The test set is used once: changing anything after seeing its results makes them optimistic. Its AI images come only from generators never used in train or validation, and its real images from DOCCI and ImageNet (DATASETS.md), so it measures how the model does on new generators and new kinds of real photos.
+
+### F1. Prepare the test images (CPU runtime)
+
+Use a **CPU** runtime and get the latest code (E1). Then:
+
+```
+!python image/prepare_data.py --splits test --out-dir /content/drive/MyDrive/RealEye/data/image
+```
+
+- It prepares the test images like validation (centered crop, 288 px, JPEG quality 90; equal real and AI, an equal share per generator and real source) and drops any image already in train or validation. Default: 2,500 real + 2,500 AI (`--test-per-class`).
+- **One difference from validation: the minimum size.** Test keeps images whose shorter side is at least **288 px** (the size every image is resized to, so nothing is enlarged), not 400 px. The 400 px rule exists for random training crops; the server has no such rule, and it would drop many ImageNet photos (often about 500 × 375). Change it with `--test-min-side`, but decide before scoring the test set.
+- It reads chunks of OpenFake's 68 GB test split until it has enough, which takes a while (like A3). If Colab disconnects, run the same command again: it resumes.
+- It prints `Kept ... real + ... AI images from ... generators` and the skips (`too_small` is images under 288 px). The kept counts by real source (DOCCI, ImageNet) and generator are in `manifest.json` under `test`.
+
+### F2. Score the test set (T4 GPU runtime)
+
+Switch to a **T4 GPU** (Runtime → Change runtime type → T4 GPU), get the latest code (E1), then:
+
+```
+!python image/evaluate_test.py --model-dir /content/drive/MyDrive/RealEye/models/image/clip-mlp-20261113-0104 --data-dir /content/drive/MyDrive/RealEye/data/image
+```
+
+It runs CLIP once on every test image (a few minutes) and saves the features to `features/test.npy`, so a crash doesn't redo that part. Nothing is fitted: it uses `head.pt` and `calibration.json` exactly as saved. It prints:
+
+1. **Checks:** test images also in train or validation (should be 0) and test generators seen during development (should be none).
+2. **Results** at the saved cutoff with **PASS/FAIL** on the targets (F1 ≥ 0.75, SRS 5.4.9; false positives ≤ 10%, SRS 5.4.21), next to validation, plus AUC.
+3. **False positives** by real source (DOCCI, ImageNet) and style.
+4. **Recall** by style, by generator and by generator type.
+5. **Calibration on test** (ECE, log loss, estimate groups) next to the validation losses (calibration half B, and the validation loss when the head was chosen in training), and how sure the model was when wrong.
+
+It saves `test_results.json`, `test_scores.csv`, `reliability_test.png` and contact sheets of the mistakes (`test_errors/`) to the model folder. **It refuses to run a second time** once `test_results.json` exists. Use `--force` only if the first run crashed or used the wrong files, never to try again after changing something.
+
+Share the printout, `reliability_test.png` and the contact sheets, and add the results to `ERROR_ANALYSIS.md`.
+
 ## Troubleshooting
 
 | Problem | Fix |

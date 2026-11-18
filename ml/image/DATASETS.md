@@ -52,7 +52,7 @@ So data prep must treat every image, real and AI, the same way.
 
 ## Data prep (Nov 10)
 
-`prepare_data.py` builds the train and validation sets; `check_shortcuts.py` confirms the shortcuts are gone. Both read OpenFake straight from Hugging Face at the pinned revision; the test split is never read.
+`prepare_data.py` builds the train and validation sets; `check_shortcuts.py` confirms the shortcuts are gone. Both read OpenFake straight from Hugging Face at the pinned revision; the test split is never read during development. At the very end, `prepare_data.py --splits test` prepares it the same way as validation (dropping any image already in train or validation), except that it keeps images down to 288 px on the shorter side instead of 400 px, so small real photos such as ImageNet's stay in the test as they would in real use, and `evaluate_test.py` scores it once with the saved calibration and cutoff (COLAB.md, Part F).
 
 Every image goes through `preprocess.normalize_image`, the same function the server will use:
 

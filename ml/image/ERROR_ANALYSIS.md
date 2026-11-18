@@ -15,6 +15,8 @@ The first suspected cause was in the data. After the Nov 11 illustration cap, **
 
 **Error analysis of the MLP at the 8% cutoff** (Nov 17; see [MLP error analysis](#mlp-error-analysis-8-cutoff-nov-17)): the MLP no longer flags LAION graphics and renders more often than LAION photos (all about 12–16%), so the style effect is gone. What remains is a **polish effect**: professional, studio-lit or retouched real images (publicity photos, movie stills, posters, art photography) get flagged, and AI images that look like messy everyday web content (flyers, event snapshots, promo graphics) slip through. No file-size or style shortcut is involved, and many of these mistakes are confident, so they can't be tuned away with the cutoff. No more model changes before calibration.
 
+**Calibration** (Nov 17; see [Calibration](#calibration-nov-17)): temperature vs. Platt, fitted on one half of validation and graded on the other. The raw MLP scores lean toward AI, which temperature can't correct; **Platt (a = 0.771, b = −0.359) was chosen**, with estimates off by about 1.3 points on average (ECE 0.013 vs. 0.040 for temperature). The 8% cutoff (0.6205 on the calibrated estimate) gives **7.9% false positives and F1 0.862** on the half not used to choose it, meeting both SRS targets on validation. Next is the one-time test set.
+
 ## How the analysis was done
 
 1. **Cutoff tradeoff** (quick check in Colab): for target false-positive rates of 5%, 10% and 15%, find the cutoff that gives that rate and see what the model catches there.
@@ -402,9 +404,96 @@ This is not a data shortcut that matching can remove: style matching already too
 - **Known limitation for the write-up and the extension:** polished or retouched real images are flagged more often (about 13% for web images vs. 3% for stock photos), and AI images that look like casual web content are caught less often. This supports wording like "may be AI-generated or heavily edited," with the C2PA and SynthID evidence shown next to the model estimate.
 - **To watch on the test set:** photo-style recall, and whether the web-vs-stock gap carries over to the test's real sources (DOCCI, ImageNet).
 
+## Calibration (Nov 17)
+
+`image/calibrate.py` on `clip-mlp-20261113-0104` (COLAB.md, Part E). It reads the saved validation logits, so no GPU and no CLIP rerun. Validation is split into halves with the same mix of real/AI and of real sources and generators: **half A** (2,498 images) fits the calibration and later checks the cutoff; **half B** (2,502) grades the calibration and chooses the cutoff. Every number below is measured on the half that did not set it.
+
+**Methods compared** (isotonic regression was left out on purpose: with about 2,500 images per half it tends to overfit, and the server only supports Platt-form numbers):
+
+- **Temperature scaling:** estimate = sigmoid(logit / T). One number; it can squeeze or stretch scores around 50% but not shift them.
+- **Platt scaling:** estimate = sigmoid(a × logit + b). Two numbers: a stretch and a shift.
+
+**Decision rule, set before the run:** use temperature unless Platt's ECE on half B is lower by more than 0.01 **and** its log loss is lower.
+
+### Results on half B
+
+Fitted on half A: **T = 1.316**; **a = 0.771, b = −0.359**.
+
+| | ECE | Log loss | Brier |
+| --- | --- | --- | --- |
+| Raw scores | 0.047 | 0.313 | 0.094 |
+| Temperature | 0.040 | 0.303 | 0.093 |
+| **Platt (chosen)** | **0.013** | **0.295** | **0.090** |
+
+Share actually AI in each estimate group (images in the group):
+
+| Estimate | Raw | Temperature | Platt |
+| --- | --- | --- | --- |
+| 0–10% | 4% (745) | 4% (608) | 4% (702) |
+| 10–20% | 10% (152) | 7% (212) | 10% (208) |
+| 20–30% | 20% (108) | 13% (135) | 21% (136) |
+| 30–40% | 24% (87) | 26% (113) | 31% (98) |
+| 40–50% | 39% (67) | 34% (91) | 47% (102) |
+| 50–60% | 47% (76) | 48% (102) | 53% (103) |
+| 60–70% | 48% (90) | 52% (112) | 61% (103) |
+| 70–80% | 60% (104) | 64% (102) | 79% (104) |
+| 80–90% | 78% (116) | 83% (207) | 85% (202) |
+| 90–100% | 95% (957) | 97% (820) | 97% (744) |
+
+An honest method lands inside each row's own range. **Platt does in all 10 rows**; raw misses 6 and temperature 7. Middle groups hold about 100 images each, so they can move about ±5 points by chance. Chart: `reliability.png` in the model folder.
+
+**What this shows:**
+
+- **The raw MLP scores lean toward AI.** In the middle groups they claim more AI than there is (a raw 60–70% is really about 48% AI), which fits the polish effect: real polished images get high scores.
+- **Temperature can't fix that,** because the error is mostly a shift, not a spread. It barely helps the middle and makes 10–30% worse.
+- **Platt fixes both:** a = 0.77 squeezes over-confident scores and b = −0.36 shifts them toward real. Its estimates are off by about 1.3 percentage points on average (ECE 0.013).
+- **Decision: Platt** (ECE lower by 0.026 > 0.01, and lower log loss). Same method as the text model, so the server needs no changes.
+
+### Cutoff (chosen on half B) and check (half A)
+
+**Cutoff 0.6205 on the calibrated estimate**, the same dividing line as the raw score 0.7508 (the 0.750 used in the error analysis). In the extension, an image is labeled AI when its Model estimate is at least 62%.
+
+| Half A (not used to choose the cutoff) | Result | Target |
+| --- | --- | --- |
+| False-positive rate | **7.9%** | ≤ 10% (SRS 5.4.21) |
+| F1 | **0.862** | ≥ 0.75 (SRS 5.4.9) |
+| Recall (AI caught) | 81.7% | |
+| Precision | 91.2% | |
+| Accuracy | 86.9% | |
+
+These match the full-validation numbers at the same cutoff (8.0% false positives, 82.2% recall, F1 0.864), so the cutoff carries over to images it wasn't chosen on.
+
+Half A by group:
+
+| Real source | False-positive rate | Average estimate |
+| --- | --- | --- |
+| LAION | 12.6% (79 of 625) | 0.26 |
+| Pexels | 3.2% (20 of 625) | 0.11 |
+
+| AI style | Recall |
+| --- | --- |
+| illustration | 90.3% (149 of 165) |
+| render | 84.2% (197 of 234) |
+| graphic | 82.7% (177 of 214) |
+| photo | 78.3% (497 of 635) |
+
+Other targets (cutoff chosen on B, checked on A):
+
+| Target | Cutoff | F1 | False positives | Recall |
+| --- | --- | --- | --- | --- |
+| 10% | 0.5615 | 0.874 | 9.7% | 85.2% |
+| **8% (used)** | **0.6205** | **0.862** | **7.9%** | **81.7%** |
+| 5% | 0.7366 | 0.824 | 4.7% | 73.3% |
+
+The 10% target lands at 9.7%, too close to the SRS limit for the test set; 8% keeps about 2 points of margin, as decided on Nov 12.
+
+**Saved:** `calibration.json` in the model folder (`method: platt`, `fitted_method: platt`, a = 0.771, b = −0.359, cutoff 0.6205, all checks), which the server loads.
+
+**Caveat:** validation also picked the training round (best of 120 checkpoints), so these numbers may be slightly optimistic. The test set is the independent result.
+
 ## Next steps
 
 1. ~~Run `analyze_errors.py` on the MLP model (COLAB.md, D3).~~ Done Nov 17; see [MLP error analysis](#mlp-error-analysis-8-cutoff-nov-17).
-2. Calibration for the MLP model (`image/calibrate.py`, modeled on `text/calibrate.py`; COLAB.md Part E): temperature scaling vs. Platt scaling, fitted on one half of validation and graded on the other (temperature unless Platt's ECE is lower by more than 0.01 and its log loss is lower), a cutoff for an **8% false-positive rate** chosen on one half of validation and checked on the other, plus the 10%/8%/5% comparison.
-3. One-time test set evaluation: overall, by style, by real source (DOCCI, ImageNet) and on unseen generators.
+2. ~~Calibration for the MLP model (`image/calibrate.py`, COLAB.md Part E).~~ Done Nov 17: Platt (a = 0.771, b = −0.359), cutoff 0.6205; see [Calibration](#calibration-nov-17).
+3. One-time test set evaluation (COLAB.md Part F: `prepare_data.py --splits test`, then `evaluate_test.py`): overall with PASS/FAIL on the SRS targets, by style, by real source (DOCCI, ImageNet) and by generator (all unseen).
 4. Server integration (CLIP + the MLP head + calibration; the head adds almost nothing to the server's work).
