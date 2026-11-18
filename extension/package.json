@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
+    "test": "node --test --experimental-strip-types src/*.test.ts",
+    "test:types": "tsc -p tsconfig.test.json --noEmit",
     "build": "tsc && vite build"
   },
   "dependencies": {
@@ -13,6 +15,7 @@
   },
   "devDependencies": {
     "@types/chrome": "0.0.287",
+    "@types/node": "22.13.0",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .language import LanguageChecker
@@ -35,16 +36,33 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RealEye API", lifespan=lifespan)
 
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_origin_regex=r"chrome-extension://[a-p]{32}",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
+
+
 def error_response(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
 
 
 @app.exception_handler(RequestValidationError)
-def validation_error(request: Request, exc: RequestValidationError):
+def validation_error(_request: Request, exc: RequestValidationError):
+    _ = _request
     # Return 422 in the contract's error format instead of FastAPI's default shape.
     first = exc.errors()[0]
     field = ".".join(str(part) for part in first["loc"] if part != "body")
     return error_response(422, "invalid_request", f"{field}: {first['msg']}")
+
+
+@app.exception_handler(Exception)
+def unexpected_error(_request: Request, _exc: Exception):
+    _ = (_request, _exc)
+    logging.getLogger("realeye").exception("Unhandled API error")
+    return error_response(500, "server_error", "The RealEye server encountered an error.")
 
 
 @app.get("/health")

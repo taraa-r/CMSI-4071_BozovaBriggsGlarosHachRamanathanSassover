@@ -42,10 +42,10 @@ def evaluate(classifier: ClassifierFinding, c2pa: C2PAFinding, synthid: SynthIDF
         state = "unable_to_analyze"
     conflict = bool(evidence) and classifier_done and not classifier_trigger
 
-    return state, conflict, evidence, explain(state, classifier, evidence)
+    return state, conflict, evidence, explain(classifier, evidence)
 
 
-def explain(state: str, classifier: ClassifierFinding, evidence: list[str]) -> str:
+def explain(classifier: ClassifierFinding, evidence: list[str]) -> str:
     parts = []
     if classifier.status == "completed" and classifier.estimate is not None:
         side = "at or above" if "classifier" in evidence else "below"

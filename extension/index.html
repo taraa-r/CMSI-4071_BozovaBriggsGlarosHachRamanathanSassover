@@ -2,7 +2,50 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=400, initial-scale=1.0" />
     <title>RealEye</title>
+    <style>
+      html,
+      body,
+      #root {
+        width: 400px;
+        min-width: 400px;
+        max-width: 400px;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 480px;
+        max-height: 520px;
+        overflow-x: hidden;
+      }
+      #root,
+      .popup-shell {
+        box-sizing: border-box;
+      }
+      #root {
+        max-height: 520px;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+      .popup-shell {
+        width: 400px;
+        min-width: 400px;
+        max-width: 400px;
+        box-sizing: border-box;
+      }
+      @media (max-width: 399px) {
+        html,
+        body,
+        #root,
+        .popup-shell {
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
