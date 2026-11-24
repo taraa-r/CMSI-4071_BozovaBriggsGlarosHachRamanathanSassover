@@ -1,10 +1,11 @@
+
 """Request and response shapes for POST /analyze. See docs/api-contract.md."""
 
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 MAX_ITEMS_PER_REQUEST = 10  # SRS 5.3.3.69
 
@@ -19,17 +20,44 @@ class AnalyzeItem(BaseModel):
     mime_type: Literal["image/jpeg", "image/png", "image/webp"] | None = None
     source_url: str | None = None
 
+    @model_validator(mode="after")
+    def validate_item_content(self):
+        if self.type == "text":
+            if self.text is None or not self.text.strip():
+                raise ValueError(
+                    "Text items must include non-empty text."
+                )
+
+        elif self.type == "image":
+            if not self.image_base64 or not self.image_base64.strip():
+                raise ValueError(
+                    "Image items must include image_base64."
+                )
+
+            if self.mime_type is None:
+                raise ValueError(
+                    "Image items must include mime_type."
+                )
+
+        return self
+
 
 class AnalyzeRequest(BaseModel):
     scan_id: UUID
     page_url: str
     scan_time: datetime
-    items: list[AnalyzeItem] = Field(max_length=MAX_ITEMS_PER_REQUEST)
+    items: list[AnalyzeItem] = Field(
+        max_length=MAX_ITEMS_PER_REQUEST
+    )
 
 
 # ---------- Response ----------
 
-OverallState = Literal["warning", "inconclusive", "unable_to_analyze"]
+OverallState = Literal[
+    "warning",
+    "inconclusive",
+    "unable_to_analyze",
+]
 
 
 class ClassifierFinding(BaseModel):
@@ -39,10 +67,13 @@ class ClassifierFinding(BaseModel):
     label: Literal["ai", "human"] | None = None
     threshold: float | None = None
     model_version: str | None = None
-    # Why there is no estimate when status is "unsupported" (SRS 5.3.1.53).
-    reason: Literal["length", "language", "not_available"] | None = None
-    # Characters the model actually read (first 512 tokens) and the text's full length, so the
-    # extension can say when an estimate covers only part of a long text.
+
+    reason: Literal[
+        "length",
+        "language",
+        "not_available",
+    ] | None = None
+
     analyzed_chars: int | None = None
     total_chars: int | None = None
 
@@ -60,7 +91,13 @@ class C2PAFinding(BaseModel):
 
 
 class SynthIDFinding(BaseModel):
-    status: Literal["detected", "not_detected", "not_applicable", "unavailable", "error"]
+    status: Literal[
+        "detected",
+        "not_detected",
+        "not_applicable",
+        "unavailable",
+        "error",
+    ]
 
 
 class ItemResult(BaseModel):
@@ -68,12 +105,14 @@ class ItemResult(BaseModel):
     type: Literal["text", "image"]
     overall_state: OverallState
     conflict: bool
-    warning_evidence: list[Literal["classifier", "c2pa", "synthid"]]
+    warning_evidence: list[
+        Literal["classifier", "c2pa", "synthid"]
+    ]
     classifier: ClassifierFinding
     c2pa: C2PAFinding
     synthid: SynthIDFinding
     limitations: list[str]
-    explanation: str  # plain-language reason for the overall state (SRS 5.3.3.56)
+    explanation: str
 
 
 class AnalyzeResponse(BaseModel):
